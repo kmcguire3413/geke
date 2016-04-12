@@ -31,6 +31,7 @@ class ChanOverview(qtgui4.QWidget):
 				cont.x = float(ix * bw)
 				cont.y = float(iy * bh)
 				cont.active = False
+				cont.squelch = 0.0
 				cont.volume = 0.0
 				cont.audio = 0.0
 				cont.chan_num = iz
@@ -48,7 +49,23 @@ class ChanOverview(qtgui4.QWidget):
 		print 'cont painting!!', x, y, w, h
 		rect = qtcore4.QRectF
 		color = qtgui4.QColor()
-		color.setRgb(200, 200, 200)
+
+		if c.active:
+			rm = 0.5
+			gm = 1.0
+			bm = 0.5
+		else:
+			rm = 0.5
+			gm = 0.5
+			bm = 0.5
+
+		if self.cur_chan == c.chan_num:
+			rm = 1.0
+
+		def getcolor(r, g, b):
+			return qtgui4.QColor(float(r) * rm, float(g) * gm, float(b) * bm)
+
+		color = getcolor(200, 200, 200)
 		qp.fillRect(
 			rect(
 				x + 0.0, 
@@ -63,7 +80,7 @@ class ChanOverview(qtgui4.QWidget):
 				float(c.audio) / 100.0 * -h), 
 		color)
 
-		color.setRgb(60, 60, 60)
+		color = getcolor(60, 60, 60)
 		brush = qtgui4.QPen(color)
 		qp.setPen(brush)
 		qp.drawText(x, y, w * 0.5, h * 0.2, 0, '(%s)' % c.chan_num)
@@ -87,7 +104,10 @@ class ChanOverview(qtgui4.QWidget):
 	def set_chan_volume(self, ndx, volume):
 		self.chans[ndx].volume = float(volume)
 		self.update()
-		print 'repaint!!! now!!'
+
+	def set_chan_squelch(self, ndx, squelch):
+		self.chans[ndx].squelch = float(squelch)
+		self.update()
 
 	# Color the right bar for current audio level at 0.0 to 1.0
 	def set_chan_audio_level(self, ndx, level):

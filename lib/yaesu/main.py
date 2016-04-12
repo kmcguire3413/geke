@@ -61,9 +61,19 @@ class YaesuBC(qtgui4.QWidget):
 		self.right_bottom = qtgui4.QWidget()
 
 		self.mode_select = qtgui4.QComboBox()
+		self.enable_channel = qtgui4.QPushButton("Toggle Enabled")
 
 		for k in ['AM', 'FM', 'SSB']:
 			self.mode_select.addItem(k)
+
+		def __enable_clicked():
+			chan = self.get_cur_vchan()
+			if chan.is_on():
+				chan.off()
+			else:
+				chan.on()
+
+		self.enable_channel.clicked.connect(__enable_clicked)
 
 		#quick_layout(self.left, [
 		#	self.left_upper, self.left_bottom
@@ -127,12 +137,12 @@ class YaesuBC(qtgui4.QWidget):
 
 		start_sps = 60000
 
-		self.q_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='GHZ', digits=12, signal=change_freq, xdef=101900000)
+		self.q_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='FREQUENCY', digits=12, signal=change_freq, xdef=101900000)
 		self.q_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RXGAIN', digits=2, signal=change_rxgain, xdef=70)
 		self.q_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='BANDWIDTH', digits=9, signal=change_bw, xdef=63500)
 		self.q_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='SPS', digits=9, signal=change_sps, xdef=start_sps)
 		self.q_vol = qlcdnumberadjustable.QLCDNumberAdjustable(label='VOL', digits=2, signal=change_vol, xdef=50)
-		self.q_chan = qlcdnumberadjustable.QLCDNumberAdjustable(label='CHAN', digits=2, signal=change_chan, xdef=0, max=16)
+		self.q_chan = qlcdnumberadjustable.QLCDNumberAdjustable(label='CHAN', digits=2, signal=change_chan, xdef=0, max=chan_count)
 
 		self.top.lay = quick_layout(self.top, [
 			self.q_cfreq, self.q_gain, self.q_bw, self.q_sps, self.q_vol, self.q_chan
@@ -211,12 +221,16 @@ class YaesuBC(qtgui4.QWidget):
 				xself.q_map.set_chan_volume(self.ndx, volume)
 
 			def __change_squelch(self, squelch):
-				xself.q_map.set_squelch(self.ndx, squelch)
+				xself.q_map.set_chan_squelch(self.ndx, squelch)
+
+			def __change_active(self, active):
+				xself.q_map.set_chan_active(self.ndx, active)
 
 			chanover = ChanOverProxy()
 			chanover.ndx = x
 			chanover.change_volume = types.MethodType(__change_volume, chanover)
 			chanover.change_squelch = types.MethodType(__change_squelch, chanover)
+			chanover.change_active = types.MethodType(__change_active, chanover)
 
 			block = mode_am.AM(self.tb, self.rx, self.audio_out[x], chanover)
 			# The `start_sps` is needed as the control can not be accurately read
@@ -247,8 +261,8 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.mode_select.currentIndexChanged.connect(_mode_change)
 
-		self.left_upper.resize(100, 25)
-		self.left_upper.lay = quick_layout(self.left_upper, [self.mode_select], horizontal=False)
+		self.left_upper.resize(300, 25)
+		self.left_upper.lay = quick_layout(self.left_upper, [self.mode_select, self.enable_channel], horizontal=True)
 		self.left_upper.lay.setSpacing(2)
 		self.left_upper.lay.setMargin(0)
 
@@ -266,12 +280,15 @@ class YaesuBC(qtgui4.QWidget):
 		self.cur_chan = 0
 		self.set_cur_vchan(0)
 
+	def get_cur_vchan(self):
+		return self.vchannels[self.cur_chan]
+
 	def set_cur_vchan(self, ndx):
 		chan = self.vchannels[self.cur_chan]
-		#chan.get_left().hide()
-		#chan.get_right().hide()
-		self.cur_chan = ndx
-		self.q_map.set_chan_current(ndx)
+		chan.get_left().hide()
+		chan.get_right().hide()
+		self.cur_chan = int(ndx)
+		self.q_map.set_chan_current(ndx % len(self.vchannels))
 		chan = self.vchannels[self.cur_chan]
 		print '$$1', chan.get_left().show()
 		print '$$2', chan.get_right().show()

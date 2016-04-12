@@ -7,6 +7,96 @@ import math
 class QLCDNumberAdjustable(qtgui4.QWidget):
 	def __init__(self, label, digits, signal=None, xdef=None, max=None):
 		qtgui4.QWidget.__init__(self)
+		self.label = label
+		self.digits = float(digits)
+		self.signal = signal
+		self.xdef = float(xdef)
+		if max is not None:
+			self.max = float(max)
+		else:
+			self.max = None
+		self.cur_digits = [0] * int(digits)
+		if xdef is not None:
+			self.set_value(xdef)
+		self.mouse_over_digit = None
+		self.halfed = 0.5
+
+		self.setMouseTracking(True)
+
+	def get_value(self):
+		txt = []
+		for x in xrange(0, len(self.cur_digits)):
+			txt.append(str(self.cur_digits[x]))
+		txt = int(''.join(txt))
+		return txt
+
+	def leaveEvent(self, event):
+		self.mouse_over_digit = None
+		self.update()
+
+	def mouseMoveEvent(self, event):
+		w = float(self.width())
+		h = float(self.height())
+		x = float(event.x())
+		y  = float(event.y())
+
+		if y > h * self.halfed:
+			# Highlite the digit that the mouse is over only
+			# if it has changed.
+			weach = (w / self.digits)
+			weach = min(weach, self.height() - self.height() * self.halfed)
+			tmp = math.floor(x / weach)
+			if tmp != self.mouse_over_digit:
+				self.mouse_over_digit = int(tmp)
+			if y > h * self.halfed + (h - h * self.halfed) * 0.5:
+				self.mouse_portion = 1.0
+			else:
+				self.mouse_portion = 0.0
+		else:
+			self.mouse_over_digit = None
+		self.update()
+
+	def set_value(self, value):
+		xdef = str(int(value))
+		self.cur_digits = [0] * int(self.digits)
+		for x in xrange(0, len(xdef)):
+			self.cur_digits[len(self.cur_digits) - len(xdef) + x] = int(xdef[x])
+
+	def mouseReleaseEvent(self, event):
+		if self.mouse_over_digit is not None:
+			if self.mouse_portion > 0.0:
+				self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] - 1) % 10
+			else:
+				self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] + 1) % 10
+		if self.max is not None and self.get_value() > self.max:
+			self.set_value(self.max)
+		self.update()
+
+	def paintEvent(self, event):
+		qp = qtgui4.QPainter(self)
+		font = qtgui4.QFont()
+		qp.drawText(0, 0, self.width(), self.height() * self.halfed, 0, self.label)
+		color_hoverbg = qtgui4.QColor(90, 90, 90)
+		color_halfbg = qtgui4.QColor(120, 120, 120)
+		bothalf_height = self.height() - self.height() * self.halfed
+		# Draw each digit.
+		weach = float(self.width()) / float(len(self.cur_digits))
+		weach = min(weach, bothalf_height)
+		font.setPixelSize(min(bothalf_height, weach))
+		qp.setFont(font)
+		y = float(self.height()) * self.halfed
+		for i in xrange(0, len(self.cur_digits)):
+			x = weach * i
+			if self.mouse_over_digit == i:
+				qp.fillRect(qtcore4.QRectF(x, y, weach, self.height() * self.halfed), color_hoverbg)
+				qp.fillRect(qtcore4.QRectF(x, y + bothalf_height * 0.5 * self.mouse_portion, weach, bothalf_height * 0.5), color_halfbg)
+			qp.drawText(x, y, weach, self.height() * self.halfed, 0, '%s' % self.cur_digits[i])
+
+		qp.end()
+
+class QLCDNumberAdjustable2(qtgui4.QWidget):
+	def __init__(self, label, digits, signal=None, xdef=None, max=None):
+		qtgui4.QWidget.__init__(self)
 		self.lay = qtgui4.QVBoxLayout()
 		self.setLayout(self.lay)
 

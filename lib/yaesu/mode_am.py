@@ -140,15 +140,17 @@ class AM:
 
 		self.last_sps = sps
 
+	def is_on(self):
+		return self.active
+
 	def on(self):
 		if self.active:
 			return
-		print 'turned on'
-		exit()
 		self.active = True
 		self.tb.lock()
 		self.tb.connect(self.rx, self.resampler, self.shift_filter, self.demod, self.null_sink)
 		self.tb.unlock() 
+		self.chanover.change_active(True)
 
 	def off(self):
 		if not self.active:
@@ -160,6 +162,7 @@ class AM:
 		self.tb.disconnect(self.shift_filter, self.demod)
 		self.tb.disconnect(self.demod, self.null_sink)
 		self.tb.unlock()
+		self.chanover.change_active(False)
 
 	def get_left(self):
 		return self.left 

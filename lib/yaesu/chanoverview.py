@@ -8,36 +8,43 @@ class ChanOverview(qtgui4.QWidget):
 	class Chan:
 		pass
 
-	def __init__(self, chancnt, w, h):
+	def __init__(self, chancnt):
 		qtgui4.QWidget.__init__(self)
-
-		self.resize(w, h)
 
 		self.chans = []
 
-		bdim = math.ceil(math.sqrt(float(chancnt)))
+		self.chancnt = chancnt
+
+		for x in xrange(0, chancnt):
+			cont = ChanOverview.Chan()
+			cont.chan_num = x
+			cont.active = False
+			cont.squelch = 0.0
+			cont.volume = 0.0
+			cont.audio = 0.0			
+			self.chans.append(cont)
+
+	def compute_dim(self):
+		bdim = math.ceil(math.sqrt(float(self.chancnt)))
+		w = self.width()
+		h = self.height()
 		bw = float(w) / bdim
 		bh = float(h) / bdim		
 
 		for iy in xrange(0, int(bdim)):
 			for ix in xrange(0, int(bdim)):
 				iz = ix + iy * int(bdim)
-				if iz >= chancnt:
+				if iz >= self.chancnt:
 					break
-				cont = ChanOverview.Chan()
-				self.chans.append(cont)
+				cont = self.chans[iz]
 				cont.w = bw
 				cont.h = bh
 				cont.x = float(ix * bw)
 				cont.y = float(iy * bh)
-				cont.active = False
-				cont.squelch = 0.0
-				cont.volume = 0.0
-				cont.audio = 0.0
-				cont.chan_num = iz
 
 	def paintEvent(self, event):
 		print 'telling cont(s) to repaint!!'
+		self.compute_dim()
 		qp = qtgui4.QPainter(self)
 		for c in self.chans:
 			self.chanPaint(
@@ -65,23 +72,35 @@ class ChanOverview(qtgui4.QWidget):
 		def getcolor(r, g, b):
 			return qtgui4.QColor(float(r) * rm, float(g) * gm, float(b) * bm)
 
-		color = getcolor(200, 200, 200)
+		color = getcolor(130, 230, 130)
 		qp.fillRect(
 			rect(
 				x + 0.0, 
 				y + h, 
-				w * 0.5, 
+				w * 0.33, 
 				float(c.volume) / 100.0 * -h), color)
+		color = getcolor(170, 170, 170)
 		qp.fillRect(
 			rect(
 				x + w * 0.5, 
 				y + h,
-				w * 0.5, 
-				float(c.audio) / 100.0 * -h), 
+				w * 0.33, 
+				float(c.audio) / 100.0 * -h),
+		color)
+		color = getcolor(130, 230, 130)
+		qp.fillRect(
+			rect(
+				x + w * 0.5, 
+				y + h,
+				w * 0.33, 
+				float(c.squelch) / 100.0 * -h),
 		color)
 
 		color = getcolor(60, 60, 60)
 		brush = qtgui4.QPen(color)
+		font = qtgui4.QFont()
+		font.setPixelSize(8)
+		qp.setFont(font)
 		qp.setPen(brush)
 		qp.drawText(x, y, w * 0.5, h * 0.2, 0, '(%s)' % c.chan_num)
 		qp.drawText(x, y + h * 0.2, w * 0.5, h * 0.2, 0, '%s' % c.volume)

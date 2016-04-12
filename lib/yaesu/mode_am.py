@@ -22,6 +22,8 @@ class AM:
 		self.left = qtgui4.QWidget()
 		self.right = qtgui4.QWidget()
 
+		self.audio_disconnect_node = None
+
 		self.chanover = chanover
 		self.tb = tb
 		self.rx = rx
@@ -30,20 +32,28 @@ class AM:
 
 		def change_volume(value):
 			chanover.change_volume(value)
+			self.update(self.sps)
 
 		def change_squelch(value):
 			chanover.change_squelch(value)
+			self.update(self.sps)
 
-		self.freq = qlcdnumberadjustable.QLCDNumberAdjustable(label='CENTER FREQUENCY HZ', digits=9, xdef=0)
-		self.cutoff = qlcdnumberadjustable.QLCDNumberAdjustable(label='FREQ CUTOFF HZ', digits=6, xdef=1000)
-		self.oob_atten = qlcdnumberadjustable.QLCDNumberAdjustable(label='OOB-BAND ATTENUATE DB', digits=3, max=100, xdef=2)
-		self.oob_width = qlcdnumberadjustable.QLCDNumberAdjustable(label='OOB-BAND WIDTH HZ', digits=6, xdef=1000)
-		self.audio_passband = qlcdnumberadjustable.QLCDNumberAdjustable(label='AUDIO PASSBAND', digits=6, xdef=5000)
-		self.audio_cutoff = qlcdnumberadjustable.QLCDNumberAdjustable(label='AUDIO CUTOFF', digits=6, xdef=1000)
+		def change_frequency(value):
+			chanover.change_center_freq(value)
+			self.update(self.sps)
+
+		self.freq = qlcdnumberadjustable.QLCDNumberAdjustable(label='CEN FREQ', digits=9, xdef=0, signal=change_frequency)
+		self.cutoff = qlcdnumberadjustable.QLCDNumberAdjustable(label='CUTOFF', digits=6, xdef=1000)
+		self.oob_atten = qlcdnumberadjustable.QLCDNumberAdjustable(label='OOB ATT DB', digits=3, max=100, xdef=2)
+		self.oob_width = qlcdnumberadjustable.QLCDNumberAdjustable(label='OOB HZ', digits=6, xdef=5000)
+		self.audio_passband = qlcdnumberadjustable.QLCDNumberAdjustable(label='AB HZ', digits=6, xdef=5000)
+		self.audio_cutoff = qlcdnumberadjustable.QLCDNumberAdjustable(label='AB FALL', digits=6, xdef=1000)
 		self.gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='GAIN DB', digits=3, max=100, xdef=20)
 		self.vol = qlcdnumberadjustable.QLCDNumberAdjustable(label='VOLUME', digits=3, xdef=50, max=100, signal=change_volume)
-		self.isps = qlcdnumberadjustable.QLCDNumberAdjustable(label='SPS', digits=6, xdef=50000, max=1000000)
+		chanover.change_volume(50)
+		self.isps = qlcdnumberadjustable.QLCDNumberAdjustable(label='SPS', digits=6, xdef=20000, max=1000000)
 		self.sq = qlcdnumberadjustable.QLCDNumberAdjustable(label='SQUELCH', digits=3, xdef=50, max=100, signal=change_squelch)
+		chanover.change_squelch(50)
 
 		self.left.lay = quick_layout(self.left, [
 			self.freq, self.cutoff, self.oob_atten, self.oob_width,
@@ -83,11 +93,11 @@ class AM:
 
 		if getattr(self, 'resampler', None) is None:
 			self.resampler = filter.fractional_resampler_cc(
-				0.5,
+				1.0,
 				float(sps) / float(isps)
 			)
 		else:
-			self.resampler.set_resamp_ratio(sps / audiosps)
+			self.resampler.set_resamp_ratio(float(sps) / float(isps))
 
 		if getattr(self, 'shift_filter', None) is not None:
 			self.tb.disconnect(self.resampler, self.shift_filter)
@@ -118,18 +128,8 @@ class AM:
 			1, taps, freq, sps
 		)
 
-		print '@@@@@@'
-
-		self.null_sink = blocks.null_sink(4)
-		self.null_source = blocks.null_source(4)
-
-		#self.tb.connect(self.null_source, self.audio)
-
-		print '######'
-
-		self.audio = (self.audio[0], 0)
-
 		if self.active:
+			self.off()
 			self.on()
 		else:
 			self.off()
@@ -148,7 +148,16 @@ class AM:
 			return
 		self.active = True
 		self.tb.lock()
-		self.tb.connect(self.rx, self.resampler, self.shift_filter, self.demod, self.null_sink)
+		print 'audio-block', self.audio
+		self.tb.connect(self.rx, self.resampler, self.shift_filter, self.demod)
+		self.audio_disconnect_node = self.audio.connect(self.demod)
+		
+		#self.tmp = blocks.complex_to_mag_squared()
+		#self.tb.connect(self.rx, self.tmp)
+		#self.tmp2 = blocks.null_sink(4)
+		#self.tb.connect(self.tmp, self.tmp2)	
+		#self.audio_disconnect_node = self.audio.connect(self.demod)
+
 		self.tb.unlock() 
 		self.chanover.change_active(True)
 
@@ -157,10 +166,21 @@ class AM:
 			return
 		self.active = False
 		self.tb.lock()
-		self.tb.disconnect(self.rx, self.resampler)
-		self.tb.disconnect(self.resampler, self.shift_filter)
-		self.tb.disconnect(self.shift_filter, self.demod)
-		self.tb.disconnect(self.demod, self.null_sink)
+		try:
+			self.tb.disconnect(self.rx, self.resampler)
+		except:
+			pass
+		try:
+			self.tb.disconnect(self.resampler, self.shift_filter)
+		except:
+			pass
+		try:
+			self.tb.disconnect(self.shift_filter, self.demod)
+		except:
+			pass
+		if self.audio_disconnect_node is not None:
+			self.audio_disconnect_node.disconnect()
+			self.audio_disconnect_node = None
 		self.tb.unlock()
 		self.chanover.change_active(False)
 

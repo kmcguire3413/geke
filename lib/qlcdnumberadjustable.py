@@ -38,7 +38,7 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 		w = float(self.width())
 		h = float(self.height())
 		x = float(event.x())
-		y  = float(event.y())
+		y = float(event.y())
 
 		if y > h * self.halfed:
 			# Highlite the digit that the mouse is over only
@@ -70,11 +70,15 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 				self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] + 1) % 10
 		if self.max is not None and self.get_value() > self.max:
 			self.set_value(self.max)
+		if self.signal:
+			self.signal(self.get_value())
 		self.update()
 
 	def paintEvent(self, event):
 		qp = qtgui4.QPainter(self)
 		font = qtgui4.QFont()
+		font.setPixelSize(10)
+		qp.setFont(font)
 		qp.drawText(0, 0, self.width(), self.height() * self.halfed, 0, self.label)
 		color_hoverbg = qtgui4.QColor(90, 90, 90)
 		color_halfbg = qtgui4.QColor(120, 120, 120)
@@ -83,15 +87,14 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 		weach = float(self.width()) / float(len(self.cur_digits))
 		weach = min(weach, bothalf_height)
 		font.setPixelSize(min(bothalf_height, weach))
-		qp.setFont(font)
 		y = float(self.height()) * self.halfed
+
 		for i in xrange(0, len(self.cur_digits)):
 			x = weach * i
 			if self.mouse_over_digit == i:
 				qp.fillRect(qtcore4.QRectF(x, y, weach, self.height() * self.halfed), color_hoverbg)
 				qp.fillRect(qtcore4.QRectF(x, y + bothalf_height * 0.5 * self.mouse_portion, weach, bothalf_height * 0.5), color_halfbg)
 			qp.drawText(x, y, weach, self.height() * self.halfed, 0, '%s' % self.cur_digits[i])
-
 		qp.end()
 
 class QLCDNumberAdjustable2(qtgui4.QWidget):

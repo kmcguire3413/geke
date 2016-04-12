@@ -5,12 +5,17 @@ import PyQt4 as pyqt4
 from gnuradio import gr
 from gnuradio import blocks, analog, filter, qtgui, audio, fft
 
+import lib.qlcdnumberadjustable as qlcdnumberadjustable
+
 import geke
 
 import numpy
 import math
 
 class QFastFFT(qtgui4.QWidget):
+	class CenterMeta:
+		pass
+
 	def __init__(self, tb, fftlen=1024, parent=None):
 		qtgui4.QImage.__init__(self, parent)
 
@@ -30,6 +35,50 @@ class QFastFFT(qtgui4.QWidget):
 		self.ly = 0
 		self.fft = None
 
+		def __change_fftsize(pow2size):
+			fftsize = 2 ** pow2size
+			self.change(fftsize, self.fftlen)
+
+		self.fftsize_pow2_select = qlcdnumberadjustable.QLCDNumberAdjustable(
+			label='FFT Size', 
+			digits = 2,
+			xdef = 4,
+			max = 16,
+			signal = __change_fftsize
+		)
+
+		self.fftsize_pow2_select.setParent(self)
+		self.fftsize_pow2_select.move(0, 0)
+		self.fftsize_pow2_select.resize(100, 25)
+
+		self.drawtop = 25
+
+		self.centers = {}
+
+	def get_center_meta(self, id):
+		if self.centers.get(id, None) is None:
+			meta = QFastFFT.CenterMeta()
+			self.centers[id] = meta
+			meta.freq = 0.0
+			meta.width = 10.0
+			meta.active = False
+
+		return self.centers[id]
+
+	def set_center_freq(self, ndx, center_freq):
+		meta = self.get_center_meta(ndx)
+		meta.freq = center_freq
+		self.update()
+		print 'qfastfft center freq set to %s for id %s' % (center_freq, ndx)
+
+	def set_center_active(self, ndx, active):
+		meta = self.get_center_meta(ndx)
+		meta.active = active
+		self.update()
+
+	def set_sps(self, sps):
+		self.sps = sps
+
 	def change(self, fftsize, fftlen):
 		fftlen = 1024 * 5
 		# TODO: change without clearing the buffer
@@ -45,9 +94,18 @@ class QFastFFT(qtgui4.QWidget):
 
 		self.tb.lock()
 		if self.fft is not None:
-			self.tb.disconnect(self.src_blk, self.fft)
-			self.tb.disconnect(self.fft, slf.stv0)
-			self.tb.disconnect(self.stv0, self.ctm)
+			try:
+				self.tb.disconnect(self.src_blk, self.fft)
+			except:
+				pass
+			try:
+				self.tb.disconnect(self.fft, slf.stv0)
+			except:
+				pass
+			try:
+				self.tb.disconnect(self.stv0, self.ctm)
+			except:
+				pass
 
 		fft_filter = []
 		for x in xrange(0, fftsize):
@@ -79,9 +137,49 @@ class QFastFFT(qtgui4.QWidget):
 		self.update()
 
 	def paintEvent(self, event):
-		self.fast_paint_no_scroll(event)
+		qp = qtgui4.QPainter(self)
+		self.fast_paint_no_scroll(event, qp)
 		#self.slow_paint_scroll(event)
 		self.queue = []
+
+		font = qtgui4.QFont()		
+
+		for k in self.centers:
+			meta = self.centers[k]
+
+			pixperhz = float(self.width()) / float(self.sps)
+
+			color = qtgui4.QColor()
+
+			if meta.active:
+				color.setRgbF(1.0, 0.0, 0.0, 1.0)
+			else:
+				color.setRgbF(1.0, 0.0, 0.0, 0.5)
+
+			if meta.freq < 0.0:
+				sign = -1.0
+			else:
+				sign = 1.0
+
+			x = pixperhz * meta.freq + self.width() * 0.5 + sign * meta.width * pixperhz * 0.5
+
+			fs = 10.0
+			font.setPixelSize(fs)
+			qp.setFont(font)			
+
+			qp.drawRect(
+				qtcore4.QRectF(
+					x,
+					self.drawtop,
+					pixperhz * meta.width,
+					self.height()
+				)
+			)
+
+			qp.drawText(x + 1, self.drawtop, fs, 30, 0, '%s' % k)
+
+		qp.end()
+
 
 	def slow_paint_scroll(self, event):
 		qpainter = qtgui4.QPainter(self)
@@ -155,8 +253,7 @@ class QFastFFT(qtgui4.QWidget):
 		)
 		'''
 
-	def fast_paint_no_scroll(self, event):
-		qpainter = qtgui4.QPainter(self)
+	def fast_paint_no_scroll(self, event, qpainter):
 
 		if self.width() < self.fftsize:
 			vwidth = float(self.width())
@@ -168,12 +265,10 @@ class QFastFFT(qtgui4.QWidget):
 			self.avg = geke.system(self, vec, self.fftsize, self.avg, self.bmpbuf, vwidth)
 
 		qpainter.drawImage(
-			qtcore4.QRectF(0, 0, self.width(), self.height()),
+			qtcore4.QRectF(0, self.drawtop + 25.0, self.width(), self.height() - (self.drawtop + 25.0)),
 			self.img,
 			qtcore4.QRectF(0, 0, self.fftsize, self.fftlen)
 		)
-
-		qpainter.end()
 
 		#print 'done painting'
 

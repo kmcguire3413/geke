@@ -65,6 +65,11 @@ class QFastFFT(qtgui4.QWidget):
 
 		return self.centers[id]
 
+	def set_center_width(self, ndx, width_hz):
+		meta = self.get_center_meta(ndx)
+		meta.width = width_hz
+		self.update()
+
 	def set_center_freq(self, ndx, center_freq):
 		meta = self.get_center_meta(ndx)
 		meta.freq = center_freq
@@ -116,8 +121,9 @@ class QFastFFT(qtgui4.QWidget):
 		self.ctm = blocks.complex_to_mag_squared(fftsize)
 		self.reader = PyBlockHandler(fftsize=fftsize, blockcnt=1)
 		self.reader.setVecHandler(self.__vec_handler)
+		self.keep = blocks.keep_m_in_n(8, self.fftsize, self.fftsize * 2, 0)
 
-		self.tb.connect(self.src_blk, self.stv0, self.fft, self.ctm, self.reader)
+		self.tb.connect(self.src_blk, self.keep, self.stv0, self.fft, self.ctm, self.reader)
 
 		self.tb.unlock()
 

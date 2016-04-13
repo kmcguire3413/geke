@@ -43,7 +43,6 @@ class ChanOverview(qtgui4.QWidget):
 				cont.y = float(iy * bh)
 
 	def paintEvent(self, event):
-		print 'telling cont(s) to repaint!!'
 		self.compute_dim()
 		qp = qtgui4.QPainter(self)
 		for c in self.chans:
@@ -53,7 +52,6 @@ class ChanOverview(qtgui4.QWidget):
 		qp.end()
 
 	def chanPaint(self, c, qp, x, y, w, h):
-		print 'cont painting!!', x, y, w, h
 		rect = qtcore4.QRectF
 		color = qtgui4.QColor()
 

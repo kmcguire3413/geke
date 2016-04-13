@@ -8,28 +8,12 @@ from gnuradio import blocks, analog, filter, qtgui, audio, fft
 import types
 import math
 import numpy
+import cmath
 
 import lib.qfastfft as qfastfft
 import lib.yaesu.chanoverview as chanoverview
 import lib.qlcdnumberadjustable as qlcdnumberadjustable
 import lib.yaesu.mode_am as mode_am
-
-class Combiner(gr.sync_block):
-	def __init__(self):
-		gr.sync_block.__init__(
-			self, 
-			name = "PyBlockHandler", 
-			in_sig = [numpy.float32], 
-			out_sig = [numpy.float32]
-		)
-
-	def work(self, input_items, output_items):
-		o = input_items[0]	
-		for x in xrange(1, len(input_items)):
-			o = numpy.add(input_items[x], o)
-		output_items[:] = o
-		return len(o)
-
 
 class AudioMultiple:
 	class DisconnectNode:
@@ -39,11 +23,10 @@ class AudioMultiple:
 		def disconnect(self):
 			self.am.disconnect(self.rxblock)
 
-
 	def __init__(self, tb, asps):
 		self.tb = tb
-		self.throttle = blocks.throttle(4, 8000)		
-		self.audio_sink = audio.sink(asps, '', False)
+		self.audio_sink = audio.sink(asps, '', True)
+		#self.audio_sink = blocks.file_sink(4, '/home/kmcguire/dump')
 		self.ins = []
 		self.adds = []
 
@@ -66,31 +49,20 @@ class AudioMultiple:
 				break
 		self.__connect_all()
 
-	'''
-		Z
-		(A, B)
-		(C, D)
-		(E, None)
-
-		C--->+
-		E--->D----->+
-		     A----->B----->Z
-
-	'''
-
 	def __disconnect_all(self):
 		self.tb.lock()
-		try:
+		'''try:
 			self.tbdisconnect(self.throttle, self.audio_sink, 'A')
 		except:
 			# This is okay to happen. It will not be connected
 			# the very first time and we support recurrent calling
 			# of this function for safety.
 			pass
+		'''
 		for x in xrange(0, len(self.ins)):
 			if x == 0:
 				try:
-					self.tbdisconnect(self.ins[x][0], self.throttle, 'B')
+					self.tbdisconnect(self.ins[x][0], self.audio_sink, 'B')
 				except:
 					pass
 			else:
@@ -121,13 +93,17 @@ class AudioMultiple:
 			else:
 				if self.ins[x][1] is None:
 					self.ins[x][1] = blocks.add_ff()
+					self.ins[x][1].set_min_noutput_items(8192 * 32)
 		print 'graph', self.ins
+		if len(self.ins) == 0:
+			self.tb.unlock()
+			return True
 		if len(self.ins) == 1:
-			self.tbconnect(self.throttle, self.audio_sink, 'Z2')
-			self.tbconnect(self.ins[0][0], self.throttle, 'Z1')
+			#self.tbconnect(self.throttle, self.audio_sink, 'Z2')
+			self.tbconnect(self.ins[0][0], self.audio_sink, 'Z1')
 			self.tb.unlock()
 			return True 
-		self.tbconnect(self.throttle, self.audio_sink, 'A')
+		#self.tbconnect(self.throttle, self.audio_sink, 'A')
 		for x in xrange(0, len(self.ins)):
 			if x == len(self.ins) - 1:
 				# Do not connect across, but at a diagonal.
@@ -136,7 +112,7 @@ class AudioMultiple:
 				# Connect across, then connect down in preparation
 				# for a connection from the next level up.
 				if x == 0:
-					self.tbconnect(self.ins[x][1], self.throttle, 'F' + str(x))
+					self.tbconnect(self.ins[x][1], self.audio_sink, 'F' + str(x))
 				else:
 					self.tbconnect(self.ins[x][1], (self.ins[x-1][1], 1), 'D' + str(x))
 				self.tbconnect(self.ins[x][0], self.ins[x][1], 'E' + str(x))
@@ -272,7 +248,7 @@ class YaesuBC(qtgui4.QWidget):
 		def change_chan(value):
 			self.set_cur_vchan(value)
 
-		start_sps = 60000
+		start_sps = 64000
 
 		self.qfft.set_sps(start_sps)
 
@@ -307,23 +283,49 @@ class YaesuBC(qtgui4.QWidget):
 		'''
 
 		#self.rx_noise = analog.fastnoise_source_c(analog.GR_GAUSSIAN, 1.0)
-		self.rx_sig = analog.sig_source_c(start_sps, analog.GR_SIN_WAVE, 5000, 0.7)
-		#self.sigsrc = blocks.vector_source_c(
-		#	[0.0, 1.0, 1.0, 0.0, 0.5, 0.5], True
-		#)
-		self.rx_add = blocks.add_cc()
-		self.rx = blocks.throttle(8, start_sps, True)
-		#self.tb.connect(self.rx_noise, (self.rx_add, 0))
-		#self.tb.connect(self.rx_sig, (self.rx_add, 1))
-		self.tb.connect(self.rx_sig, self.rx)
-		#self.tb.connect(self.rx_add, self.rx)
+		'''
+		self.rx_sig0 = analog.sig_source_f(start_sps, analog.GR_SIN_WAVE, 800, 1.0)
+		self.rx_sig1 = analog.sig_source_c(start_sps, analog.GR_SIN_WAVE, 5000, 1.0)
+		self.rx_ftc = blocks.float_to_complex(1)
+		self.rx_zsrc = analog.sig_source_f(0, analog.GR_CONST_WAVE, 0, 0, 0)
+		self.rx_mul = blocks.multiply_vcc(1)
+		self.rx_throttle = blocks.throttle(8, start_sps)
 
-		#self.rx = blocks.add_cc()
-		#self.tb.connect(self.rx_noise, (self.rx, 0))
-		#self.tb.connect(self.rx_sin, (self.rx, 1))
+		self.tb.connect(self.rx_zsrc, (self.rx_ftc, 0))
+		self.tb.connect(self.rx_sig0, (self.rx_ftc, 1))
+		self.tb.connect(self.rx_ftc, (self.rx_mul, 0))
+		self.tb.connect(self.rx_sig1, (self.rx_mul, 1))
+		self.tb.connect(self.rx_mul, self.rx_throttle)
+		self.rx = self.rx_throttle
+		'''
+
+		'''
+			XXXXXXXXXX
+			Y Y Y Y Y
+
+
+		'''
+
+		samps = []
+		limit = int(start_sps)
+		for x in xrange(0, limit):
+			a = abs(math.sin((float(x) / float(start_sps)) * 1000.0 * math.pi * 2.0))
+			theta = (float(x) / float(start_sps)) * 5000.0 * math.pi * 2.0
+			samps.append(cmath.rect(a, theta))
+
+		self.rx_noise = analog.fastnoise_source_c(analog.GR_GAUSSIAN, 0.7)
+		self.rx_add = blocks.add_cc()
+		self.rx_vsrc = blocks.vector_source_c(samps, True)
+		#self.rx_file = blocks.file_sink(8, '/home/kmcguire/dump.base')
+		self.rx = blocks.throttle(8, start_sps)
+
+		#self.tb.connect(self.rx, self.rx_file)
+		self.tb.connect(self.rx_vsrc, (self.rx_add, 0))
+		self.tb.connect(self.rx_noise, (self.rx_add, 1))
+		self.tb.connect(self.rx_add, self.rx)
 
 		self.middle.set_src_blk(self.rx)
-		self.middle.change(64, 1024 * 100)
+		self.middle.change(4096, 1024)
 
 		self.tb.start()
 
@@ -357,6 +359,9 @@ class YaesuBC(qtgui4.QWidget):
 				xself.qfft.set_center_freq(self.ndx, center_freq)
 				xself.qfft.set_center_active(self.ndx, self.active)
 
+			def __change_width(self, width_hz):
+				xself.qfft.set_center_width(self.ndx, width_hz)
+
 			chanover = ChanOverProxy()
 			chanover.ndx = x
 			chanover.active = False
@@ -364,6 +369,7 @@ class YaesuBC(qtgui4.QWidget):
 			chanover.change_squelch = types.MethodType(__change_squelch, chanover)
 			chanover.change_active = types.MethodType(__change_active, chanover)
 			chanover.change_center_freq = types.MethodType(__change_center_freq, chanover)
+			chanover.change_width = types.MethodType(__change_width, chanover)
 
 			block = mode_am.AM(self.tb, self.rx, self.audio_sink, chanover)
 			# The `start_sps` is needed as the control can not be accurately read

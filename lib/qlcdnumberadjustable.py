@@ -5,17 +5,21 @@ import PyQt4 as pyqt4
 import math
 
 class QLCDNumberAdjustable(qtgui4.QWidget):
-	def __init__(self, label, digits, signal=None, xdef=None, max=None):
+	def __init__(self, label, digits, signal=None, xdef=None, max=None, negative=False):
 		qtgui4.QWidget.__init__(self)
 		self.label = label
 		self.digits = float(digits)
 		self.signal = signal
 		self.xdef = float(xdef)
+		self.negative = negative
 		if max is not None:
 			self.max = float(max)
 		else:
 			self.max = None
+		if negative:
+			digits = digits + 1
 		self.cur_digits = [0] * int(digits)
+		self.cur_digits[0] = '+'
 		if xdef is not None:
 			self.set_value(xdef)
 		self.mouse_over_digit = None
@@ -59,15 +63,26 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 	def set_value(self, value):
 		xdef = str(int(value))
 		self.cur_digits = [0] * int(self.digits)
+		if self.negative:
+			if value < 0:
+				self.cur_digits[0] = '-'
+			else:
+				self.cur_digits[0] = '+'
 		for x in xrange(0, len(xdef)):
 			self.cur_digits[len(self.cur_digits) - len(xdef) + x] = int(xdef[x])
 
 	def mouseReleaseEvent(self, event):
 		if self.mouse_over_digit is not None:
-			if self.mouse_portion > 0.0:
-				self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] - 1) % 10
+			if self.negative and self.mouse_over_digit == 0:
+				if self.cur_digits[0] == '+':
+					self.cur_digits[0] = '-'
+				else:
+					self.cur_digits[0] = '+'
 			else:
-				self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] + 1) % 10
+				if self.mouse_portion > 0.0:
+					self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] - 1) % 10
+				else:
+					self.cur_digits[self.mouse_over_digit] = (self.cur_digits[self.mouse_over_digit] + 1) % 10
 		if self.max is not None and self.get_value() > self.max:
 			self.set_value(self.max)
 		if self.signal:

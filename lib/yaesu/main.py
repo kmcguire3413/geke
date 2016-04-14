@@ -252,10 +252,16 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.qfft.set_sps(start_sps)
 
-		self.q_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='FREQUENCY', digits=12, signal=change_freq, xdef=101900000)
-		self.q_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RXGAIN', digits=2, signal=change_rxgain, xdef=70)
-		self.q_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='BANDWIDTH', digits=9, signal=change_bw, xdef=63500)
-		self.q_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='SPS', digits=9, signal=change_sps, xdef=start_sps)
+		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=change_freq, xdef=101900000)
+		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=change_rxgain, xdef=15)
+		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=change_bw, xdef=63500)
+		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
+
+		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, signal=change_freq, xdef=101900000)
+		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, signal=change_rxgain, xdef=15)
+		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, signal=change_bw, xdef=63500)
+		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
+
 		self.q_vol = qlcdnumberadjustable.QLCDNumberAdjustable(label='VOL', digits=2, signal=change_vol, xdef=50)
 		self.q_chan = qlcdnumberadjustable.QLCDNumberAdjustable(label='CHAN', digits=2, signal=change_chan, xdef=0, max=chan_count - 1)
 
@@ -332,6 +338,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.vchannels = []
 
 		self.audio_sink = AudioMultiple(self.tb, 16000)
+		self.audio_source = audio.source(16000)
 
 		'''
 			Configure the channels.
@@ -371,10 +378,10 @@ class YaesuBC(qtgui4.QWidget):
 			chanover.change_center_freq = types.MethodType(__change_center_freq, chanover)
 			chanover.change_width = types.MethodType(__change_width, chanover)
 
-			block = mode_am.AM(self.tb, self.rx, self.audio_sink, chanover)
+			block = mode_am.AM(self.tb, self.rx, sef.tx, self.audio_sink, self.audio_source, chanover)
 			# The `start_sps` is needed as the control can not be accurately read
 			# until later even though it has been set with this value.
-			block.update(start_sps)
+			block.update(0.0, 0.0, float(start_sps), float(start_sps))
 
 			self.vchannels.append(block)
 

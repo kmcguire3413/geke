@@ -11,7 +11,7 @@ import lib.yaesu.modeshell as modeshell
 ModeShell = modeshell.ModeShell
 
 class FM(ModeShell):
-	def __init__(self, tb, rx, audio, chanover):
+	def __init__(self, tb, rx, tx, audio, chanover):
 		uicfg = {
 			'freq': {
 				'type':     'lcdnum',
@@ -68,14 +68,14 @@ class FM(ModeShell):
 		}
 		ModeShell.__init__(self, uicfg, tb, rx, audio, chanover)
 
-	def update(self, sps, fast=False):
+	def update(self, rxcenter, txcenter, rxsps, txsps, fast=False):
 		"""
 		Updates the module by its parameters. Supports a full reconfiguration
 		and a fast reconfiguration for only simple changes such as volume, squelch,
 		frequency, and audiosps which can be changed without much computational expense.
 		"""
-		sps = float(sps)
-		self.sps = sps
+		self.rxsps = rxsps
+		self.txsps = txsps
 
 		# self.freq, self.bw, self.bwdrop, self.gain, self.vol, self.isps, self.sq
 
@@ -117,8 +117,8 @@ class FM(ModeShell):
 	def on(self):
 		ModeShell.on(self)
 		self.tb.lock()
-		self.tb.connect(self.shiftsrc, (self.shifter, 0), self.decfilter, self.fmdemod, self.sqblock, self.volblock)
-		self.tb.connect(self.rx, (self.shifter, 1))
+		self.connect(self.shiftsrc, (self.shifter, 0), self.decfilter, self.fmdemod, self.sqblock, self.volblock)
+		self.connect(self.rx, (self.shifter, 1))
 		self.audio_disconnect_node = self.audio.connect(self.volblock)
 		self.tb.unlock() 
 		self.chanover.change_active(True)
@@ -127,16 +127,7 @@ class FM(ModeShell):
 	def off(self):
 		ModeShell.off(self)
 		self.tb.lock()
-		if self.shiftsrc is not None:
-			try:
-				self.tb.disconnect(self.rx, (self.shifter, 1))
-				self.tb.disconnect(self.shiftsrc, (self.shifter, 0))
-				self.tb.disconnect(self.shifter, self.decfilter)
-				self.tb.disconnect(self.decfilter, self.fmdemod)
-				self.tb.disconnect(self.fmdemod, self.sqblock)
-				self.tb.disconnect(self.sqblock, self.volblock)
-			except:
-				pass
+		self.disconnect_all()
 		if self.audio_disconnect_node is not None:
 			self.audio_disconnect_node.disconnect()
 			self.audio_disconnect_node = None

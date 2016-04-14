@@ -5,7 +5,7 @@ import PyQt4 as pyqt4
 import math
 
 class QLCDNumberAdjustable(qtgui4.QWidget):
-	def __init__(self, label, digits, signal=None, xdef=None, max=None, negative=False):
+	def __init__(self, label, digits, mul=None, signal=None, xdef=None, max=None, negative=False):
 		qtgui4.QWidget.__init__(self)
 		self.label = label
 		self.digits = float(digits)
@@ -18,6 +18,7 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 			self.max = None
 		if negative:
 			digits = digits + 1
+		self.mul = mul
 		self.cur_digits = [0] * int(digits)
 		self.cur_digits[0] = '+'
 		if xdef is not None:
@@ -94,7 +95,11 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 		font = qtgui4.QFont()
 		font.setPixelSize(10)
 		qp.setFont(font)
-		qp.drawText(0, 0, self.width(), self.height() * self.halfed, 0, self.label)
+		if self.mul is None:
+			label_text = self.label
+		else:
+			label_text = self.label + '(' + str(self.get_value() * self.mul) + ')'
+		qp.drawText(0, 0, self.width(), self.height() * self.halfed, 0, label_text)
 		color_hoverbg = qtgui4.QColor(90, 90, 90)
 		color_halfbg = qtgui4.QColor(120, 120, 120)
 		bothalf_height = self.height() - self.height() * self.halfed

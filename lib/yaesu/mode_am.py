@@ -11,93 +11,74 @@ import lib.yaesu.modeshell as modeshell
 ModeShell = modeshell.ModeShell
 
 class AM(ModeShell):
-	def __init__(self, tb, rx, audio, chanover):
+	def __init__(self, tb, rx, tx, audio, audio_in, chanover):
 		uicfg = {
-			'freq': {
-				'type':     'lcdnum',
-				'digits': 	9,
-				'negative': True,
-				'xdef': 	5000,
-				'label': 	'CEN FREQ',
-			},
-			'bw': {
-				'type':     'lcdnum',
-				'digits':   6,
-				'xdef':     1000,
-				'label':    'BW',
-			},
-			'bwdrop': {
-				'type':     'lcdnum',
-				'label':	'BW DROP',
-				'digits':    3,
-				'xdef':      900,
-			},
-			'gain': {
-				'type':     'lcdnum',
-				'label':	'GAIN DB',
-				'digits':   3,
-				'max':      1000,
-				'xdef':     3,
-			},
-			'vol': {
-				'type':     'lcdnum',
-				'label':    'VOLUME',
-				'digits':   3,
-				'xdef':     50,
-				'max':      100,
-			},
-			'isps': {
-				'type':     'lcdnum',
-				'label':   	'ASPS',
-				'digits':   6,
-				'xdef':     16000,
-				'max':      1000000,
-			},
-			'sq': {
-				'type':     'lcdnum',
-				'label':	'SQUELCH',
-				'digits':   3,
-				'xdef':     50,
-				'max':      100,
-			}
+			'freq': self.make_cfg_lcdnum(12, False, 0, 'ABS FREQ HZ'),
+			'tx_audio_mul': self.make_cfg_lcdnum(4, False, 6, 'TX INPUT LINEAR AMP'),
+			'ssb_shifter_freq': self.make_cfg_lcdnum(7, True, 11000, 'SSB SHIFT HZ'),
+			'cutoff_freq': self.make_cfg_lcdnum(7, False, 1300, 'BW HZ'),
+			'cutoff_width': self.make_cfg_lcdnum(4, False, 100, 'BW EDGE HZ'),
+			'tx_sq': self.make_cfg_lcdnum(4, False, 0, 'TX SQ'),
+			'rx_output_gain': self.make_cfg_lcdnum(4, False, 20, 'RX OUTPUT LOG AMP'),
+			'rx_sq': self.make_cfg_lcdnum(4, False, 0, 'RX SQ'),
 		}
-		ModeShell.__init__(self, uicfg, tb, rx, audio, chanover)
+		ModeShell.__init__(self, uicfg, tb, rx, tx, audio, audio_in, chanover)
 
-	def update(self, sps, fast=False):
+	def update(self, rxcenter, txcenter, rxsps, txsps, fast=False):
 		"""
 		Updates the module by its parameters. Supports a full reconfiguration
 		and a fast reconfiguration for only simple changes such as volume, squelch,
 		frequency, and audiosps which can be changed without much computational expense.
 		"""
-		sps = float(sps)
-		self.sps = sps
-
-		# self.freq, self.bw, self.bwdrop, self.gain, self.vol, self.isps, self.sq
-
-		freq = self.freq.get_value()
-		bw = self.bw.get_value()
-		bwdrop = self.bwdrop.get_value()
-		gain = self.gain.get_value()
-		vol = self.vol.get_value()
-		isps = self.isps.get_value()
-		sq = self.sq.get_value()
-
-		print 'sps:%s freq:%s bw:%s bwdrop:%s gain:%s vol:%s isps:%s sq:%s' % (sps, freq, bw, bwdrop, gain, vol, isps, sq)
-
-		taps = filter.firdes.low_pass(gain, isps, bw, bwdrop, filter.firdes.WIN_BLACKMAN)
+		rxsps = float(rxsps)
+		self.rxsps = rxsps
+		txsps = float(txsps)
+		self.txsps = txsps
 
 		# Turn it off to disconnect them before the variable contents
 		# below are replaced.
 		was_active = self.active
 		self.off()
 
-		self.shiftsrc = analog.sig_source_c(sps, analog.GR_COS_WAVE, -freq, 0.1, 0)
-		self.shifter = blocks.multiply_cc()
-		self.decfilter = filter.fir_filter_ccf(int(sps / isps) // 2, taps)
-		self.amper = blocks.complex_to_mag_squared()
-		self.sqblock = analog.standard_squelch(isps)
-		self.sqblock.set_threshold(float(sq) / 100.0)
-		self.volblock = blocks.multiply_const_ff(float(vol) / 70.0)
+		freq = self.freq.get_value()
+		tx_audio_mul = self.tx_audio_mul.get_value()
+		tx_ssb_shifter_freq = self.ssb_shifter_freq.get_value()
+		tx_cutoff_freq = self.cutoff_freq.get_value()
+		tx_cutoff_width = self.cutoff_width.get_value()
+		tx_sq = self.tx_sq.get_value()
+
+		rx_output_gain = self.rx_output_gain.get_value()
+		rx_cutoff_freq = self.cutoff_freq.get_value()
+		rx_cutoff_width = self.cutoff_width.get_value()
+		rx_sq = self.rx_sq.get_value()
+
+		tx_loc_freq = freq - txcenter
+		rx_loc_freq = freq - rxcenter
+
+		if tx_loc_freq > txsps * 0.75:
+			self.tx_vol = None
+		else:
+			self.tx_vol = blocks.multiply_const_vff(tx_audio_mul)
+			self.tx_sq = analog.standard_squelch(audio_rate=16000)
+			self.tx_sq.set_threshold(tx_sq)
+			self.tx_cnst_src = analog.sig_source_f(0, analog.GR_CONST_WAVE, 0, 0, 0)
+			self.tx_ftc = blocks.float_to_complex(1)
+			self.tx_ssb_shifter_mul = blocks.multiply_vcc(1)
+			self.tx_ssb_shifter = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_ssb_shifter_freq, 0.1, 0)
+			self.tx_lpf = filter.interp_fir_filter_ccf(10, firdes.low_pass(tx_filter_gain, 16000 * 10, tx_cutoff_freq, tx_cutoff_width, firdes.WIN_BLACKMAN, 6.76))
+			self.tx_if0 = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_loc_freq, 0.1, 0)		
+			self.tx_if0_mul = blocks.multiply_vcc(1)
+
+		if rx_loc_freq > rxsps * 0.75:
+			self.rx_if0 = None
+		else:
+			self.rx_if0 = analog.sig_source_c(rxsps, analog.GR_COS_WAVE, -rx_loc_freq, 0.1, 0)
+			self.rx_if0_mul = blocks.multiply_vcc(1)
+			self.rx_lpf = filter.fir_filter_ccf(rxsps / 16000, firdes.low_pass(rx_filter_gain, rxsps, rx_cutoff_freq, rx_cutoff_width, firdes.WIN_HAMMING, 6.76))
+			self.rx_cms = blocks.complex_to_mag_squared()
+			self.rx_vol = blocks.multiply_const_vff((10.0 ** (rx_output_gain / 10.0), ))
+			self.sqblock = analog.standard_squelch(16000)
+			self.sqblock.set_threshold(float(rx_sq) / 100.0)
 
 		if was_active:
 			self.on()
@@ -107,9 +88,15 @@ class AM(ModeShell):
 	def on(self):
 		ModeShell.on(self)
 		self.tb.lock()
-		self.tb.connect(self.shiftsrc, (self.shifter, 0), self.decfilter, self.amper, self.sqblock, self.volblock)
-		self.tb.connect(self.rx, (self.shifter, 1))
-		self.audio_disconnect_node = self.audio.connect(self.volblock)
+		if self.tx_vol is not None:
+			self.connect(self.tx_vol, self.tx_sq, self.tx_ftc, self.tx_ssb_shifter_mul, self.tx_lpf, self.tx_if0_mul)
+			self.connect(self.tx_cnst_src, self.tx_ftc)
+			self.connect(self.tx_if0, self.tx_if0_mul, self.tx)
+		if self.rx_if0 is not None:
+			self.connect(self.rx, (self.rx_if0_mul, 0))
+			self.connect(self.rx_if0, (self.rx_if0_mul, 1))
+			self.connect(self.if0_mul, self.rx_lpf, self.rx_cms, self.rx_vol)
+			self.audio_disconnect_node = self.audio.connect(self.rx_vol)
 		self.tb.unlock() 
 		self.chanover.change_active(True)
 		print 'ON'
@@ -117,16 +104,7 @@ class AM(ModeShell):
 	def off(self):
 		ModeShell.off(self)
 		self.tb.lock()
-		if self.shiftsrc is not None:
-			try:
-				self.tb.disconnect(self.rx, (self.shifter, 1))
-				self.tb.disconnect(self.shiftsrc, (self.shifter, 0))
-				self.tb.disconnect(self.shifter, self.decfilter)
-				self.tb.disconnect(self.decfilter, self.amper)
-				self.tb.disconnect(self.amper, self.sqblock)
-				self.tb.disconnect(self.sqblock, self.volblock)
-			except:
-				pass
+		self.disconnect_all()
 		if self.audio_disconnect_node is not None:
 			self.audio_disconnect_node.disconnect()
 			self.audio_disconnect_node = None

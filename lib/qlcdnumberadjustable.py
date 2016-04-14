@@ -32,7 +32,7 @@ class QLCDNumberAdjustable(qtgui4.QWidget):
 		txt = []
 		for x in xrange(0, len(self.cur_digits)):
 			txt.append(str(self.cur_digits[x]))
-		txt = int(''.join(txt))
+		txt = float(''.join(txt))
 		return txt
 
 	def leaveEvent(self, event):

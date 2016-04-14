@@ -13,12 +13,13 @@ ModeShell = modeshell.ModeShell
 class AM(ModeShell):
 	def __init__(self, tb, rx, tx, audio, audio_in, chanover):
 		uicfg = {
+			'txpwrpri': self.make_cfg_lcdnum(3, False, 0, 'TX PWR PRI'),
 			'freq': self.make_cfg_lcdnum(12, False, 0, 'ABS FREQ HZ'),
 			'tx_audio_mul': self.make_cfg_lcdnum(4, False, 6, 'TX INPUT LINEAR AMP'),
 			'ssb_shifter_freq': self.make_cfg_lcdnum(7, True, 11000, 'SSB SHIFT HZ'),
 			'cutoff_freq': self.make_cfg_lcdnum(7, False, 1300, 'BW HZ'),
 			'cutoff_width': self.make_cfg_lcdnum(4, False, 100, 'BW EDGE HZ'),
-			'tx_sq': self.make_cfg_lcdnum(4, False, 0, 'TX SQ'),
+			'tx_sq': self.make_cfg_lcdnum(4, False, 100, 'TX SQ'),
 			'rx_output_gain': self.make_cfg_lcdnum(4, False, 20, 'RX OUTPUT LOG AMP'),
 			'rx_sq': self.make_cfg_lcdnum(4, False, 0, 'RX SQ'),
 		}
@@ -60,7 +61,7 @@ class AM(ModeShell):
 		else:
 			self.tx_vol = blocks.multiply_const_vff(tx_audio_mul)
 			self.tx_sq = analog.standard_squelch(audio_rate=16000)
-			self.tx_sq.set_threshold(tx_sq)
+			self.tx_sq.set_threshold(tx_sq / 10.0)
 			self.tx_cnst_src = analog.sig_source_f(0, analog.GR_CONST_WAVE, 0, 0, 0)
 			self.tx_ftc = blocks.float_to_complex(1)
 			self.tx_ssb_shifter_mul = blocks.multiply_vcc(1)

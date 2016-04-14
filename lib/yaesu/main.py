@@ -1,3 +1,7 @@
+"""
+	"... I find then a law, that is evil is present with me, the one who wills to do good. ..." (Romans 7, NKJV)
+"""
+
 from PyQt4 import QtCore as qtcore4
 from PyQt4 import QtGui as qtgui4
 import PyQt4 as pyqt4
@@ -10,12 +14,42 @@ import math
 import numpy
 import cmath
 
+from gnuradio import uhd
+
 import lib.qfastfft as qfastfft
 import lib.yaesu.chanoverview as chanoverview
 import lib.qlcdnumberadjustable as qlcdnumberadjustable
 import lib.yaesu.mode_am as mode_am
+import lib.yaesu.mode_fm as mode_fm
 
-class AudioMultiple:
+class Limiter(gr.sync_block):
+	"""
+	A block that applies a complex number magnitude limiting value
+	and performs a multiplications afterwards.
+	"""
+	def __init__(self):
+		gr.sync_block(
+			self, 
+			input_signature=[numpy.complex64], 
+			output_signature=[numpy.complex64]
+		)
+		self.mulval = 0.0
+		self.limval = 0.0
+
+	def work(noutput_items, input_items, output_items):
+		if len(input_items) != 1:
+			raise Exception('The number of input items should be one only.')
+		out = numpy.fmin(out, self.limval)
+		out = numpy.multiply(input_items[0], self.mulval)
+		output_items[:] = out
+
+	def set_mulval(mulval):
+		self.mulval = mulval
+
+	def set_limval(limval):
+		self.limval = limval
+
+class BlockMultipleAdd:
 	class DisconnectNode:
 		def __init__(self):
 			pass
@@ -23,19 +57,45 @@ class AudioMultiple:
 		def disconnect(self):
 			self.am.disconnect(self.rxblock)
 
-	def __init__(self, tb, asps):
+	def __init__(self, tb, block, limit=None, bcomplex=False):
+	"""
+		The limit is the maximum output magnitude from this block.
+	"""
+		self.bcomplex = bcomplex
 		self.tb = tb
-		self.audio_sink = audio.sink(asps, '', True)
-		#self.audio_sink = blocks.file_sink(4, '/home/kmcguire/dump')
+		self.audio_sink = block
 		self.ins = []
 		self.adds = []
+		self.pwrcal = 
 
-	def connect(self, rxblock):
+	def recalpwrpri(self):
+		tot = 0.0
+		for x in xrange(0, len(self.ins)):
+			ain = self.ins[x]
+			tot += ain[3].get_value()
+		for x in xrange(0, len(self.ins)):
+			ain = self.ins[x]
+			self.ins[x][0].set_mulval(ain.get_value() / tot)
+
+	def tick(self):
+		# Recalculate power for power priorities.
+		self.recalpwrpri()
+
+	def connect(self, rxblock, pwrprimon=None):
 		if rxblock in self.ins:
 			return False
 		self.__disconnect_all()
-		self.ins.append([rxblock, None])
-		dnode = AudioMultiple.DisconnectNode()
+		if pwrprimon is not None:
+			moder = Limiter()
+			moder.set_limval(1.0)
+			moder.set_mulval(0.0)
+			self.ins.append([
+				moder, None, rxblock, pwrprimon
+			])
+			self.tbconnect(rxblock, moder, 'RXBLOCKMODER')
+		else:
+			self.ins.append([rxblock, None, None, pwrprimon])
+		dnode = BlockMultipleAdd.DisconnectNode()
 		dnode.rxblock = rxblock
 		dnode.am = self
 		self.__connect_all()
@@ -62,7 +122,7 @@ class AudioMultiple:
 		for x in xrange(0, len(self.ins)):
 			if x == 0:
 				try:
-					self.tbdisconnect(self.ins[x][0], self.audio_sink, 'B')
+					self.tbdisconnect(self.ins[x][0], self.block_sink, 'B')
 				except:
 					pass
 			else:
@@ -92,7 +152,10 @@ class AudioMultiple:
 				self.ins[x][1] = None
 			else:
 				if self.ins[x][1] is None:
-					self.ins[x][1] = blocks.add_ff()
+					if self.bcomplex:
+						self.ins[x][1] = blocks.add_ff()
+					else:
+						self.ins[x][1] = blocks.add_cc()
 					self.ins[x][1].set_min_noutput_items(8192 * 32)
 		print 'graph', self.ins
 		if len(self.ins) == 0:
@@ -100,7 +163,7 @@ class AudioMultiple:
 			return True
 		if len(self.ins) == 1:
 			#self.tbconnect(self.throttle, self.audio_sink, 'Z2')
-			self.tbconnect(self.ins[0][0], self.audio_sink, 'Z1')
+			self.tbconnect(self.ins[0][0], self.block_sink, 'Z1')
 			self.tb.unlock()
 			return True 
 		#self.tbconnect(self.throttle, self.audio_sink, 'A')
@@ -112,7 +175,7 @@ class AudioMultiple:
 				# Connect across, then connect down in preparation
 				# for a connection from the next level up.
 				if x == 0:
-					self.tbconnect(self.ins[x][1], self.audio_sink, 'F' + str(x))
+					self.tbconnect(self.ins[x][1], self.block_sink, 'F' + str(x))
 				else:
 					self.tbconnect(self.ins[x][1], (self.ins[x-1][1], 1), 'D' + str(x))
 				self.tbconnect(self.ins[x][0], self.ins[x][1], 'E' + str(x))
@@ -253,12 +316,12 @@ class YaesuBC(qtgui4.QWidget):
 		self.qfft.set_sps(start_sps)
 
 		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=change_freq, xdef=101900000)
-		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=change_rxgain, xdef=15)
+		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=change_rxgain, xdef=0)
 		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=change_bw, xdef=63500)
 		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
 
 		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, signal=change_freq, xdef=101900000)
-		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, signal=change_rxgain, xdef=15)
+		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, signal=change_rxgain, xdef=0)
 		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, signal=change_bw, xdef=63500)
 		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
 
@@ -266,52 +329,31 @@ class YaesuBC(qtgui4.QWidget):
 		self.q_chan = qlcdnumberadjustable.QLCDNumberAdjustable(label='CHAN', digits=2, signal=change_chan, xdef=0, max=chan_count - 1)
 
 		self.top.lay = quick_layout(self.top, [
-			self.q_cfreq, self.q_gain, self.q_bw, self.q_sps, self.q_vol, self.q_chan
+			self.q_rx_cfreq, self.q_rx_gain, self.q_rx_bw, self.q_rx_sps,
+			self.q_tx_cfreq, self.q_tx_gain, self.q_tx_bw, self.q_tx_sps,
 		])
 
-		#self.right.setStyleSheet('background-color: blue;')
-		#self.right_bottom.setStyleSheet('background-color: yellow');
-		#self.right_upper.setStyleSheet('background-color: green')
-		#self.q_map.setStyleSheet('background-color: black;')	
-
-
 		'''
-			Selection of RX input.
-		'''
-
+			Initialize the independent RX source and TX sink or emulate them as being
+			independent if only half-duplex.
 		'''
 		self.rx = uhd.usrp_source(device_addr='', stream_args=uhd.stream_args('fc32'))
-		self.rx.set_center_freq(101900000)
-		self.rx.set_bandwidth(63500)
-		self.rx.set_gain(70)
+		self.rx.set_center_freq(self.q_rx_cfreq.get_value())
+		self.rx.set_bandwidth(self.q_rx_bw.get_value())
+		self.rx.set_gain(0)
 		self.rx.set_antenna('RX2')
-		self.rx.set_samp_rate(600000)
-		'''
+		self.rx.set_samp_rate(self.q_rx_sps.get_value())
 
-		#self.rx_noise = analog.fastnoise_source_c(analog.GR_GAUSSIAN, 1.0)
-		'''
-		self.rx_sig0 = analog.sig_source_f(start_sps, analog.GR_SIN_WAVE, 800, 1.0)
-		self.rx_sig1 = analog.sig_source_c(start_sps, analog.GR_SIN_WAVE, 5000, 1.0)
-		self.rx_ftc = blocks.float_to_complex(1)
-		self.rx_zsrc = analog.sig_source_f(0, analog.GR_CONST_WAVE, 0, 0, 0)
-		self.rx_mul = blocks.multiply_vcc(1)
-		self.rx_throttle = blocks.throttle(8, start_sps)
+		self.btx = uhd.usrp_sink(device_addr='', stream_args=uhd.stream_args('fc32'))
+		self.btx.set_center_freq(self.q_tx_cfreq.get_value())
+		self.btx.set_bandwidth(self.q_tx_bw.get_value())
+		self.btx.set_gain(0)
+		self.btx.set_antenna('TX/RX')
+		self.btx.set_samp_rate(self.q_tx_sps.get_value())
 
-		self.tb.connect(self.rx_zsrc, (self.rx_ftc, 0))
-		self.tb.connect(self.rx_sig0, (self.rx_ftc, 1))
-		self.tb.connect(self.rx_ftc, (self.rx_mul, 0))
-		self.tb.connect(self.rx_sig1, (self.rx_mul, 1))
-		self.tb.connect(self.rx_mul, self.rx_throttle)
-		self.rx = self.rx_throttle
-		'''
+		self.tx = BlockMultipleAdd(self.tb, self.btx, limit=0.75, bcomplex=True)
 
 		'''
-			XXXXXXXXXX
-			Y Y Y Y Y
-
-
-		'''
-
 		samps = []
 		limit = int(start_sps)
 		for x in xrange(0, limit):
@@ -329,6 +371,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.tb.connect(self.rx_vsrc, (self.rx_add, 0))
 		self.tb.connect(self.rx_noise, (self.rx_add, 1))
 		self.tb.connect(self.rx_add, self.rx)
+		'''
 
 		self.middle.set_src_blk(self.rx)
 		self.middle.change(4096, 1024)
@@ -337,7 +380,7 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.vchannels = []
 
-		self.audio_sink = AudioMultiple(self.tb, 16000)
+		self.audio_sink = BlockMultipleAdd(self.tb, audio.sink(16000, '', True))
 		self.audio_source = audio.source(16000)
 
 		'''
@@ -378,7 +421,7 @@ class YaesuBC(qtgui4.QWidget):
 			chanover.change_center_freq = types.MethodType(__change_center_freq, chanover)
 			chanover.change_width = types.MethodType(__change_width, chanover)
 
-			block = mode_am.AM(self.tb, self.rx, sef.tx, self.audio_sink, self.audio_source, chanover)
+			block = mode_am.AM(self.tb, self.rx, self.tx, self.audio_sink, self.audio_source, chanover)
 			# The `start_sps` is needed as the control can not be accurately read
 			# until later even though it has been set with this value.
 			block.update(0.0, 0.0, float(start_sps), float(start_sps))
@@ -388,9 +431,8 @@ class YaesuBC(qtgui4.QWidget):
 
 		def _mode_change(index):
 			modes = {
-				'FM': YaesuBC_FM,
-				'AM': YaesuBC_AM,
-				'SSB': YaesuBC_SSB,
+				'FM': mode_fm,
+				'AM': mode_am,
 			}
 			mode = self.mode_select.currentText()
 			self.vchannels[self.cur_chan].deinit()

@@ -52,13 +52,13 @@ class FM(ModeShell):
 				'digits':   3,
 				'xdef':     50,
 				'max':      100,
-			}
+			},
 			'tau': {
 				'type':     'lcdnum',
 				'label':    'TAU',
 				'digits':   6,
 				'xdef':     7500,
-			}
+			},
 			'dev': {
 				'type':		'lcdnum',
 				'label':    'DEVIAT',

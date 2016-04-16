@@ -13,6 +13,9 @@ import types
 import math
 import numpy
 import cmath
+import time
+import sys
+import threading
 
 from gnuradio import uhd
 
@@ -28,28 +31,31 @@ class Limiter(gr.sync_block):
 	and performs a multiplications afterwards.
 	"""
 	def __init__(self):
-		gr.sync_block(
-			self, 
-			input_signature=[numpy.complex64], 
-			output_signature=[numpy.complex64]
-		)
+		gr.sync_block.__init__(self, 'PyLimiter', in_sig=[numpy.dtype(numpy.complex64)], out_sig=[numpy.dtype(numpy.complex64)])
 		self.mulval = 0.0
 		self.limval = 0.0
 
-	def work(noutput_items, input_items, output_items):
+	def work(self, input_items, output_items):
+		print 'working'
 		if len(input_items) != 1:
 			raise Exception('The number of input items should be one only.')
-		out = numpy.fmin(out, self.limval)
+		out = numpy.fmin(input_items[0], self.limval)
 		out = numpy.multiply(input_items[0], self.mulval)
 		output_items[:] = out
+		return len(out)
 
-	def set_mulval(mulval):
+	def set_mulval(self, mulval):
 		self.mulval = mulval
 
-	def set_limval(limval):
+	def set_limval(self, limval):
 		self.limval = limval
 
 class BlockMultipleAdd:
+	"""
+	Gracefully handles providing multiple outputs by addition to a single block
+	that only supports a single input and supports limiting and power priority
+	over float and complex streams.
+	"""
 	class DisconnectNode:
 		def __init__(self):
 			pass
@@ -57,92 +63,135 @@ class BlockMultipleAdd:
 		def disconnect(self):
 			self.am.disconnect(self.rxblock)
 
-	def __init__(self, tb, block, limit=None, bcomplex=False):
-	"""
+	def __init__(self, tb, block, throttle=None, limit=None, bcomplex=False):
+		"""
 		The limit is the maximum output magnitude from this block.
-	"""
+		"""
 		self.bcomplex = bcomplex
 		self.tb = tb
-		self.audio_sink = block
+		self.block_sink = block
+		if throttle is not None:
+			print 'added throttle block'
+			if bcomplex:
+				self.throttle = blocks.throttle(8, throttle)
+			else:
+				self.throttle = blocks.throttle(4, throttle)
+			self.block_sink2 = self.block_sink
+			self.block_sink = self.throttle
+		else:
+			self.throttle = None
+
 		self.ins = []
 		self.adds = []
-		self.pwrcal = 
 
 	def recalpwrpri(self):
 		tot = 0.0
+		# TODO: this can be optimized better
 		for x in xrange(0, len(self.ins)):
 			ain = self.ins[x]
-			tot += ain[3].get_value()
+			if ain[3] is not None:
+				tot += ain[3].get_value()
 		for x in xrange(0, len(self.ins)):
 			ain = self.ins[x]
-			self.ins[x][0].set_mulval(ain.get_value() / tot)
+			if ain[3] is not None:
+				if tot == 0.0:
+					# If no total then avoid division by zero below.
+					self.ins[x][0].set_mulval(0.0)
+				else:
+					self.ins[x][0].set_mulval(ain[3].get_value() / tot)
 
 	def tick(self):
 		# Recalculate power for power priorities.
 		self.recalpwrpri()
 
-	def connect(self, rxblock, pwrprimon=None):
-		if rxblock in self.ins:
-			return False
+	def connect(self, txblock, pwrprimon=None):
+		for x in xrange(0, len(self.ins)):
+			if self.ins[0] is txblock or self.ins[2] is txblock:
+				return False
+		print 'disconnecting all'
 		self.__disconnect_all()
+		print '@@@@'
 		if pwrprimon is not None:
+			print 'instancing limiter'
 			moder = Limiter()
 			moder.set_limval(1.0)
 			moder.set_mulval(0.0)
+			print 'registering limiter and txblock'
 			self.ins.append([
-				moder, None, rxblock, pwrprimon
+				moder, None, txblock, pwrprimon
 			])
-			self.tbconnect(rxblock, moder, 'RXBLOCKMODER')
+			print 'connecting txblock and limiter'
+			self.tbconnect(txblock, moder, 'RXBLOCKMODER')
+			print 'done'
 		else:
-			self.ins.append([rxblock, None, None, pwrprimon])
+			self.ins.append([txblock, None, None, pwrprimon])
 		dnode = BlockMultipleAdd.DisconnectNode()
-		dnode.rxblock = rxblock
+		dnode.txblock = txblock
 		dnode.am = self
+		print 'connecting all'
 		self.__connect_all()
 		return dnode
 
-	def disconnect(self, rxblock):
+	def disconnect(self, txblock):
+		self.tb.lock()
 		self.__disconnect_all()
 		for x in xrange(0, len(self.ins)):
-			if self.ins[x][0] is rxblock:
+			if self.ins[x][0] is txblock:
 				self.ins.pop(x)
 				break
 		self.__connect_all()
+		self.tb.unlock()
 
 	def __disconnect_all(self):
+		print 'locking'
+		sys.stdout.flush()
 		self.tb.lock()
-		'''try:
-			self.tbdisconnect(self.throttle, self.audio_sink, 'A')
-		except:
+		print 'locked'
+		sys.stdout.flush()
+		try:
+			if self.throttle is not None:
+				self.tbdisconnect(self.throttle, self.block_sink2, 'A')
+		except Exception as e:
 			# This is okay to happen. It will not be connected
 			# the very first time and we support recurrent calling
 			# of this function for safety.
-			pass
-		'''
+			print 'exception', e
+		print 'next stage'
+		sys.stdout.flush()
 		for x in xrange(0, len(self.ins)):
+			print 'x:%s' % x
+			sys.stdout.flush()
 			if x == 0:
 				try:
 					self.tbdisconnect(self.ins[x][0], self.block_sink, 'B')
-				except:
-					pass
+				except Exception as e:
+					print 'exception', e
 			else:
 				try:
 					self.tbdisconnect(self.ins[x][1], self.ins[x-1][1], 'C')
-				except:
-					pass
+				except Exception as e:
+					print 'exception', e
 				if self.ins[x][1] is not None:
 					try:
 						self.tbdisconnect(self.ins[x][0], self.ins[x][1], 'D')
-					except:
-						pass
+					except Exception as e:
+						print 'exception', e
+		print 'unlocking'
+		sys.stdout.flush()
+		print '... here goes ...'
+		sys.stdout.flush()
 		self.tb.unlock()
+		print 'unlocked'
+		sys.stdout.flush()
 
 	def tbdisconnect(self, a, b, tag):
 		print 'disconnect [%s] %s ---> %s' % (tag, a, b)
+		sys.stdout.flush()
 		self.tb.disconnect(a, b)
 
 	def tbconnect(self, a, b, tag):
 		print 'connect [%s] %s ---> %s' % (tag, a, b)
+		sys.stdout.flush()
 		self.tb.connect(a, b)
 
 	def __connect_all(self):
@@ -162,7 +211,8 @@ class BlockMultipleAdd:
 			self.tb.unlock()
 			return True
 		if len(self.ins) == 1:
-			#self.tbconnect(self.throttle, self.audio_sink, 'Z2')
+			if self.throttle is not None:
+				self.tbconnect(self.throttle, self.block_sink2, 'Z2')
 			self.tbconnect(self.ins[0][0], self.block_sink, 'Z1')
 			self.tb.unlock()
 			return True 
@@ -200,6 +250,35 @@ class YaesuBC(qtgui4.QWidget):
 	def __init__(self):
 		qtgui4.QWidget.__init__(self)
 		self.tb = gr.top_block()
+
+		def __unlock(self):
+			tident = threading.current_thread().ident
+			print 'top_block unlock called by thread:%s' % tident
+			time.sleep(0.1)
+			self.old_unlock()
+			time.sleep(0.1)
+
+		def __lock(self):
+			tident = threading.current_thread().ident
+			print 'top_block LOCK called by thread:%s' % tident
+			time.sleep(0.1)
+			self.old_lock()
+			time.sleep(0.1)
+
+		def __connect(self, *args):
+			tident = threading.current_thread().ident
+			for x in xrange(1, len(args)):
+				a = args[x - 1]
+				b = args[x]
+				sys.stderr.write('CONNECT\t\t%s\t\t\t\t%s\n' % (a, b))
+			self.old_connect(*args)
+
+		setattr(self.tb, 'old_unlock', self.tb.unlock)
+		setattr(self.tb, 'unlock', types.MethodType(__unlock, self.tb))
+		setattr(self.tb, 'old_lock', self.tb.lock)
+		setattr(self.tb, 'lock', types.MethodType(__lock, self.tb))
+		setattr(self.tb, 'old_connect', self.tb.connect)
+		setattr(self.tb, 'connect', types.MethodType(__connect, self.tb))
 
 		self.lmidr = qtgui4.QWidget(self)
 
@@ -271,7 +350,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.right_bottom.hide()
 		self.right.hide()		
 
-		for k in ['AM', 'FM', 'SSB']:
+		for k in ['AM', 'FM']:
 			self.mode_select.addItem(k)
 
 		def __enable_clicked():
@@ -291,19 +370,19 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.top.setMaximumSize(1100, 100)
 
-		def change_freq(value):
-			self.rx.set_center_freq(value)
+		def change_freq(dev, value):
+			dev.set_center_freq(value)
 
-		def change_rxgain(value):
+		def change_rxgain(dev, value):
 			if value > 73:
 				value = 73
-			self.rx.set_gain(value)
+			dev.set_gain(value)
 		
-		def change_bw(value):
-			self.rx.set_bandwidth(value)
+		def change_bw(dev, value):
+			dev.set_bandwidth(value)
 		
-		def change_sps(value):
-			self.rx.set_samp_rate(value)
+		def change_sps(dev, value):
+			dev.set_samp_rate(value)
 
 		def change_vol(value):
 			pass
@@ -315,22 +394,24 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.qfft.set_sps(start_sps)
 
-		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=change_freq, xdef=101900000)
-		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=change_rxgain, xdef=0)
-		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=change_bw, xdef=63500)
-		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
+		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=lambda v: change_freq(self.rx, v), xdef=90000000)
+		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=lambda v: change_rxgain(self.rx, v), xdef=0)
+		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=lambda v: change_bw(self.rx, v), xdef=63500)
+		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=lambda v: change_sps(self.rx, v), xdef=start_sps)
 
-		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, signal=change_freq, xdef=101900000)
-		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, signal=change_rxgain, xdef=0)
-		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, signal=change_bw, xdef=63500)
-		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, signal=change_sps, xdef=start_sps)
+		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, xdef=90000000)
+		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, xdef=0)
+		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, xdef=63500)
+		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, xdef=4)
 
 		self.q_vol = qlcdnumberadjustable.QLCDNumberAdjustable(label='VOL', digits=2, signal=change_vol, xdef=50)
+		self.q_tx_pwr_max = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX PWR MAX', digits=3, signal=change_vol, xdef=50, max=100)
 		self.q_chan = qlcdnumberadjustable.QLCDNumberAdjustable(label='CHAN', digits=2, signal=change_chan, xdef=0, max=chan_count - 1)
 
 		self.top.lay = quick_layout(self.top, [
 			self.q_rx_cfreq, self.q_rx_gain, self.q_rx_bw, self.q_rx_sps,
 			self.q_tx_cfreq, self.q_tx_gain, self.q_tx_bw, self.q_tx_sps,
+			self.q_vol, self.q_chan, self.q_tx_pwr_max
 		])
 
 		'''
@@ -351,7 +432,17 @@ class YaesuBC(qtgui4.QWidget):
 		self.btx.set_antenna('TX/RX')
 		self.btx.set_samp_rate(self.q_tx_sps.get_value())
 
+		#self.btx = blocks.file_sink(8, '/home/kmcguire/dump.test')
+
 		self.tx = BlockMultipleAdd(self.tb, self.btx, limit=0.75, bcomplex=True)
+
+		def __tick_tx():
+			print 'ticking'
+			self.tx.tick()
+
+		self.tx_tick = qtcore4.QTimer(self)
+		self.tx_tick.timeout.connect(__tick_tx)
+		self.tx_tick.start(1000)
 
 		'''
 		samps = []
@@ -376,7 +467,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.middle.set_src_blk(self.rx)
 		self.middle.change(4096, 1024)
 
-		self.tb.start()
+		self.tb.start()	
 
 		self.vchannels = []
 
@@ -438,6 +529,7 @@ class YaesuBC(qtgui4.QWidget):
 			self.vchannels[self.cur_chan].deinit()
 			self.vchannels[self.cur_chan].get_left().setParent(None)
 			self.vchannels[self.cur_chan].get_right().setParent(None)
+			print 'mode="%s"' % mode
 			self.vchannels[self.cur_chan] = modes[mode]()
 			chan = self.vchannels[self.cur_chan]
 			left = chan.get_left()

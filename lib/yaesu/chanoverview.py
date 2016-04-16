@@ -14,7 +14,8 @@ class ChanOverview(qtgui4.QWidget):
 		self.chans = []
 
 		self.chancnt = chancnt
-
+		self.cur_chan = None
+		
 		for x in xrange(0, chancnt):
 			cont = ChanOverview.Chan()
 			cont.chan_num = x

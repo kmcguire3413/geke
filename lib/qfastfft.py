@@ -19,7 +19,7 @@ class QFastFFT(qtgui4.QWidget):
 	def __init__(self, tb, fftlen=1024, parent=None):
 		qtgui4.QImage.__init__(self, parent)
 
-		self.fftsize = None
+		self.fftsize = 32
 		#self.ylength = 1024.0
 		self.fftlen = None		
 		self.tb = tb
@@ -121,7 +121,7 @@ class QFastFFT(qtgui4.QWidget):
 		self.ctm = blocks.complex_to_mag_squared(fftsize)
 		self.reader = PyBlockHandler(fftsize=fftsize, blockcnt=1)
 		self.reader.setVecHandler(self.__vec_handler)
-		self.keep = blocks.keep_m_in_n(8, self.fftsize, self.fftsize * 2, 0)
+		self.keep = blocks.keep_m_in_n(8, self.fftsize, self.fftsize * 1, 0)
 
 		self.tb.connect(self.src_blk, self.keep, self.stv0, self.fft, self.ctm, self.reader)
 

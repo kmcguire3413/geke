@@ -13,13 +13,15 @@ ModeShell = modeshell.ModeShell
 class AM(ModeShell):
 	def __init__(self, tb, rx, tx, audio, audio_in, chanover):
 		uicfg = {
-			'txpwrpri': self.make_cfg_lcdnum(3, False, 0, 'TX PWR PRI'),
+			'txpwrpri': self.make_cfg_lcdnum(3, False, 0, 'TX PWR PRI ALLOC'),
 			'freq': self.make_cfg_lcdnum(12, False, 0, 'ABS FREQ HZ'),
 			'tx_audio_mul': self.make_cfg_lcdnum(4, False, 6, 'TX INPUT LINEAR AMP'),
+			'tx_filter_gain': self.make_cfg_lcdnum(4, False, 430, 'TX FILTER GAIN'),
 			'ssb_shifter_freq': self.make_cfg_lcdnum(7, True, 11000, 'SSB SHIFT HZ'),
 			'cutoff_freq': self.make_cfg_lcdnum(7, False, 1300, 'BW HZ'),
 			'cutoff_width': self.make_cfg_lcdnum(4, False, 100, 'BW EDGE HZ'),
 			'tx_sq': self.make_cfg_lcdnum(4, False, 100, 'TX SQ'),
+			'rx_filter_gain': self.make_cfg_lcdnum(4, False, 0, 'RX FILTER GAIN'),
 			'rx_output_gain': self.make_cfg_lcdnum(4, False, 20, 'RX OUTPUT LOG AMP'),
 			'rx_sq': self.make_cfg_lcdnum(4, False, 0, 'RX SQ'),
 		}
@@ -45,11 +47,13 @@ class AM(ModeShell):
 		tx_audio_mul = self.tx_audio_mul.get_value()
 		tx_ssb_shifter_freq = self.ssb_shifter_freq.get_value()
 		tx_cutoff_freq = self.cutoff_freq.get_value()
+		tx_filter_gain = self.tx_filter_gain.get_value()
 		tx_cutoff_width = self.cutoff_width.get_value()
 		tx_sq = self.tx_sq.get_value()
 
 		rx_output_gain = self.rx_output_gain.get_value()
 		rx_cutoff_freq = self.cutoff_freq.get_value()
+		rx_filter_gain = self.rx_filter_gain.get_value()
 		rx_cutoff_width = self.cutoff_width.get_value()
 		rx_sq = self.rx_sq.get_value()
 
@@ -59,14 +63,14 @@ class AM(ModeShell):
 		if tx_loc_freq > txsps * 0.75:
 			self.tx_vol = None
 		else:
-			self.tx_vol = blocks.multiply_const_vff(tx_audio_mul)
+			self.tx_vol = blocks.multiply_const_ff(tx_audio_mul)
 			self.tx_sq = analog.standard_squelch(audio_rate=16000)
 			self.tx_sq.set_threshold(tx_sq / 10.0)
 			self.tx_cnst_src = analog.sig_source_f(0, analog.GR_CONST_WAVE, 0, 0, 0)
 			self.tx_ftc = blocks.float_to_complex(1)
 			self.tx_ssb_shifter_mul = blocks.multiply_vcc(1)
 			self.tx_ssb_shifter = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_ssb_shifter_freq, 0.1, 0)
-			self.tx_lpf = filter.interp_fir_filter_ccf(10, firdes.low_pass(tx_filter_gain, 16000 * 10, tx_cutoff_freq, tx_cutoff_width, firdes.WIN_BLACKMAN, 6.76))
+			self.tx_lpf = filter.interp_fir_filter_ccf(int(txsps / 16000), filter.firdes.low_pass(int(tx_filter_gain), txsps, tx_cutoff_freq, tx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
 			self.tx_if0 = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_loc_freq, 0.1, 0)		
 			self.tx_if0_mul = blocks.multiply_vcc(1)
 
@@ -75,9 +79,9 @@ class AM(ModeShell):
 		else:
 			self.rx_if0 = analog.sig_source_c(rxsps, analog.GR_COS_WAVE, -rx_loc_freq, 0.1, 0)
 			self.rx_if0_mul = blocks.multiply_vcc(1)
-			self.rx_lpf = filter.fir_filter_ccf(rxsps / 16000, firdes.low_pass(rx_filter_gain, rxsps, rx_cutoff_freq, rx_cutoff_width, firdes.WIN_HAMMING, 6.76))
+			self.rx_lpf = filter.fir_filter_ccf(int(rxsps / 16000), filter.firdes.low_pass(int(rx_filter_gain), int(rxsps), rx_cutoff_freq, rx_cutoff_width, filter.firdes.WIN_HAMMING, 6.76))
 			self.rx_cms = blocks.complex_to_mag_squared()
-			self.rx_vol = blocks.multiply_const_vff((10.0 ** (rx_output_gain / 10.0), ))
+			self.rx_vol = blocks.multiply_const_ff(10.0 ** (rx_output_gain / 10.0))
 			self.sqblock = analog.standard_squelch(16000)
 			self.sqblock.set_threshold(float(rx_sq) / 100.0)
 
@@ -90,25 +94,30 @@ class AM(ModeShell):
 		ModeShell.on(self)
 		self.tb.lock()
 		if self.tx_vol is not None:
-			self.connect(self.tx_vol, self.tx_sq, self.tx_ftc, self.tx_ssb_shifter_mul, self.tx_lpf, self.tx_if0_mul)
-			self.connect(self.tx_cnst_src, self.tx_ftc)
-			self.connect(self.tx_if0, self.tx_if0_mul, self.tx)
+			self.connect(self.audio_rx, self.tx_vol, self.tx_sq, (self.tx_ftc, 0))
+			self.connect(self.tx_ftc, self.tx_ssb_shifter_mul, self.tx_lpf, (self.tx_if0_mul, 0))
+			self.connect(self.tx_cnst_src, (self.tx_ftc, 1))
+			self.connect(self.tx_if0, (self.tx_if0_mul, 1))
+			self.tx_disconnect_node = self.tx.connect(txblock=self.tx_if0_mul, pwrprimon=self.txpwrpri)
 		if self.rx_if0 is not None:
 			self.connect(self.rx, (self.rx_if0_mul, 0))
 			self.connect(self.rx_if0, (self.rx_if0_mul, 1))
-			self.connect(self.if0_mul, self.rx_lpf, self.rx_cms, self.rx_vol)
-			self.audio_disconnect_node = self.audio.connect(self.rx_vol)
-		self.tb.unlock() 
+			self.connect(self.rx_if0_mul, self.rx_lpf, self.rx_cms, self.rx_vol)
+			self.audio_disconnect_node = self.audio_tx.connect(self.rx_vol)
+		print 'about to unlock'
+		self.tb.unlock()
+		print 'unlocking'
 		self.chanover.change_active(True)
 		print 'ON'
 
 	def off(self):
 		ModeShell.off(self)
-		self.tb.lock()
 		self.disconnect_all()
+		if self.tx_disconnect_node is not None:
+			self.tx_disconnect_node.disconnect()
+			self.tx_disconnect_node = None
 		if self.audio_disconnect_node is not None:
 			self.audio_disconnect_node.disconnect()
 			self.audio_disconnect_node = None
-		self.tb.unlock()
 		self.chanover.change_active(False)
 		print 'OFF'

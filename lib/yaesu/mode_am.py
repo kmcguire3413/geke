@@ -44,6 +44,16 @@ class AM(ModeShell):
 
 		print '@@@@@@@@@@ rxcenter:%s txcenter:%s rxsps:%s txsps:%s' % (rxcenter, txcenter, rxsps, txsps)
 
+		if self.key_changed == 'freq':
+			freq = self.freq.get_value()
+			tx_loc_freq = freq - txcenter
+			rx_loc_freq = freq - rxcenter
+			if abs(tx_loc_freq) < txsps * 0.7 and abs(rx_loc_freq) < rxsps * 0.75 and self.tx_vol is not None and self.rx_if0 is not None:
+				self.rxtxstatus.set_tx_status(True)
+				self.tx_if0.set_frequency(tx_loc_freq)
+				self.rx_if0.set_frequency(rx_loc_freq)
+				return
+
 		# Turn it off to disconnect them before the variable contents
 		# below are replaced.
 		was_active = self.active

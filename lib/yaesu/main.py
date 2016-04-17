@@ -113,7 +113,7 @@ class BlockMultipleAdd:
 
 	def connect(self, txblock, pwrprimon=None):
 		for x in xrange(0, len(self.ins)):
-			if self.ins[0] is txblock or self.ins[2] is txblock:
+			if self.ins[x][0] is txblock or self.ins[x][2] is txblock:
 				return False
 		print 'disconnecting all'
 		self.__disconnect_all()
@@ -123,7 +123,7 @@ class BlockMultipleAdd:
 			moder = Limiter()
 			moder.set_limval(1.0)
 			moder.set_mulval(0.0)
-			print 'registering limiter and txblock'
+			print 'registering and txblock'
 			self.ins.append([
 				moder, None, txblock, pwrprimon
 			])
@@ -214,7 +214,7 @@ class BlockMultipleAdd:
 				self.ins[x][1] = None
 			else:
 				if self.ins[x][1] is None:
-					if self.bcomplex:
+					if self.bcomplex is True:
 						self.ins[x][1] = blocks.add_ff()
 					else:
 						self.ins[x][1] = blocks.add_cc()
@@ -279,20 +279,24 @@ class YaesuBC(qtgui4.QWidget):
 		self.tb = gr.top_block()
 
 		self.tb.lockdepth = 0
+		self.tb.lastunlock = 0
 
 		# TODO: see if speed locking can still actually lock
 		#       but just use no timeout
 		#
 		# INFO: the timeout is a workaround for the USRP which
 		#       can not handle the fast locking and unlocking
+		def __checkdelaylocking(self):
+			if time.time() - self.tb.lastunlock < 1.0:
+				time.sleep(0.1)
+			self.tb.lastunlock = time.time()
+
 		def __unlock(self):
 			tident = threading.current_thread().ident
 			print 'top_block unlock called by thread:%s' % tident
 			self.lockdepth -= 1
 			if self.lockdepth == 0:
-				time.sleep(0.1)
 				self.old_unlock()
-				time.sleep(0.1)
 
 		def __lock(self):
 			tident = threading.current_thread().ident
@@ -532,7 +536,7 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.tb.connect(self.rx, debug.Debug(numpy.dtype(numpy.complex64), 'USRPRX'))	
 
-		self.audio_sink = BlockMultipleAdd(self.tb, self.a)
+		self.audio_sink = BlockMultipleAdd(self.tb, self.a, bcomplex=False)
 		self.audio_source = audio.source(16000)
 
 		'''
@@ -574,7 +578,7 @@ class YaesuBC(qtgui4.QWidget):
 			chanover.change_center_freq = types.MethodType(__change_center_freq, chanover)
 			chanover.change_width = types.MethodType(__change_width, chanover)
 
-			block = mode_am.AM(self.tb, self.rx, self.tx, self.audio_sink, self.audio_source, chanover)
+			block = mode_am.AM(self.tb, self.rx, self.tx, self.audio_sink, self.audio_source, chanover, self.beep)
 			# The `start_sps` is needed as the control can not be accurately read
 			# until later even though it has been set with this value.
 			block.update(self.q_rx_cfreq.get_value(), self.q_tx_cfreq.get_value(), float(start_sps), float(start_sps))
@@ -614,8 +618,20 @@ class YaesuBC(qtgui4.QWidget):
 			left.hide()
 			right.hide()
 
+		beep = []
+		for x in xrange(0, 16000):
+			theta = float(x) / 16000.0 * (1000.0 + float(x) * 0.20) * math.pi * 2.0
+			beep.append(math.sin(theta))
+
+		self.uibeeper = blocks.vector_source_f(beep)
+		self.audio_sink.connect(self.uibeeper)
+
 		self.cur_chan = 0
 		self.set_cur_vchan(0)
+
+	def beep(self):
+		print 'BEEP BEEP BEEP'
+		self.uibeeper.rewind()
 
 	def get_cur_vchan(self):
 		return self.vchannels[self.cur_chan]

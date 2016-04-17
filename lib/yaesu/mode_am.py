@@ -14,7 +14,7 @@ import lib.yaesu.modeshell as modeshell
 ModeShell = modeshell.ModeShell
 
 class AM(ModeShell):
-	def __init__(self, tb, rx, tx, audio, audio_in, chanover):
+	def __init__(self, tb, rx, tx, audio, audio_in, chanover, beeper):
 		uicfg = {
 			'txpwrpri': self.make_cfg_lcdnum(3, False, 0, 'TX PWR PRI ALLOC'),
 			'freq': self.make_cfg_lcdnum(12, False, 146005000, 'ABS FREQ HZ'),
@@ -28,7 +28,7 @@ class AM(ModeShell):
 			'rx_output_gain': self.make_cfg_lcdnum(4, False, 20, 'RX OUTPUT LOG AMP'),
 			'qrx_sq': self.make_cfg_lcdnum(4, False, 0, 'RX SQ'),
 		}
-		ModeShell.__init__(self, uicfg, tb, rx, tx, audio, audio_in, chanover)
+		ModeShell.__init__(self, uicfg, tb, rx, tx, audio, audio_in, chanover, beeper)
 
 	def update(self, rxcenter, txcenter, rxsps, txsps, fast=False):
 		ModeShell.update(self, rxcenter, txcenter, rxsps, txsps, fast=fast)
@@ -41,23 +41,6 @@ class AM(ModeShell):
 		self.rxsps = rxsps
 		txsps = float(txsps)
 		self.txsps = txsps
-
-		print '@@@@@@@@@@ rxcenter:%s txcenter:%s rxsps:%s txsps:%s' % (rxcenter, txcenter, rxsps, txsps)
-
-		if self.key_changed == 'freq':
-			freq = self.freq.get_value()
-			tx_loc_freq = freq - txcenter
-			rx_loc_freq = freq - rxcenter
-			if abs(tx_loc_freq) < txsps * 0.7 and abs(rx_loc_freq) < rxsps * 0.75 and self.tx_vol is not None and self.rx_if0 is not None:
-				self.rxtxstatus.set_tx_status(True)
-				self.tx_if0.set_frequency(tx_loc_freq)
-				self.rx_if0.set_frequency(rx_loc_freq)
-				return
-
-		# Turn it off to disconnect them before the variable contents
-		# below are replaced.
-		was_active = self.active
-		self.off()
 
 		freq = self.freq.get_value()
 		tx_audio_mul = self.tx_audio_mul.get_value()
@@ -75,6 +58,41 @@ class AM(ModeShell):
 
 		tx_loc_freq = freq - txcenter
 		rx_loc_freq = freq - rxcenter
+
+		if self.key_changed == 'freq':
+			freq = self.freq.get_value()
+			tx_loc_freq = freq - txcenter
+			rx_loc_freq = freq - rxcenter
+			if abs(tx_loc_freq) < txsps * 0.7 and self.tx_vol is not None:
+				self.rxtxstatus.set_tx_status(True)
+				self.tx_if0.set_frequency(tx_loc_freq)
+			if abs(rx_loc_freq) < txsps * 0.7 and self.rx_if0 is not None:
+				self.rxtxstatus.set_rx_status(True)
+				self.rx_if0.set_frequency(rx_loc_freq)
+			if self.rx_if0 is not None and self.tx_vol is not None:
+				return
+
+		if self.key_changed == 'ssb_shifter_freq':
+			self.tx_ssb_shifter.set_frequency(tx_ssb_shifter_freq)
+			return
+
+		if self.key_changed == 'cutoff_freq' or self.key_changed == 'cutoff_width':
+			self.tx_lpf.set_taps(filter.firdes.low_pass(int(tx_filter_gain), txsps, tx_cutoff_freq, tx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
+			self.rx_lpf.set_taps(filter.firdes.low_pass(int(rx_filter_gain), rxsps, rx_cutoff_freq, rx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
+			return
+
+		if self.key_changed == 'tx_filter_gain':
+			self.tx_lpf.set_taps(filter.firdes.low_pass(int(tx_filter_gain), txsps, tx_cutoff_freq, tx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
+			return
+
+		if self.key_changed == 'rx_filter_gain':
+			self.rx_lpf.set_taps(filter.firdes.low_pass(int(rx_filter_gain), rxsps, rx_cutoff_freq, rx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
+			return
+
+		# Turn it off to disconnect them before the variable contents
+		# below are replaced.
+		was_active = self.active
+		self.off()
 
 		print 'tx_loc_freq:%s rx_loc_freq:%s' % (tx_loc_freq, rx_loc_freq)
 

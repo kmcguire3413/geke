@@ -19,20 +19,12 @@ import threading
 
 from gnuradio import uhd
 
+import lib.debug as debug
 import lib.qfastfft as qfastfft
 import lib.yaesu.chanoverview as chanoverview
 import lib.qlcdnumberadjustable as qlcdnumberadjustable
 import lib.yaesu.mode_am as mode_am
 import lib.yaesu.mode_fm as mode_fm
-
-class Debug(gr.sync_block):
-	def __init__(self):
-		gr.sync_block.__init__(self, 'PyDebug', in_sig=[numpy.dtype(numpy.float32)], out_sig=[numpy.dtype(numpy.float32)])
-
-	def work(self, input_items, output_items):
-		print 'debug in[0].real[0]:%s' % input_items[0].real[0] 
-		output_items[:] = input_items[0]
-		return len(output_items)
 
 class Limiter(gr.sync_block):
 	"""
@@ -43,14 +35,20 @@ class Limiter(gr.sync_block):
 		gr.sync_block.__init__(self, 'PyLimiter', in_sig=[numpy.dtype(numpy.complex64)], out_sig=[numpy.dtype(numpy.complex64)])
 		self.mulval = 0.0
 		self.limval = 0.0
+		self.count = 0
 
 	def work(self, input_items, output_items):
+		self.count += 1
 		#print 'working in[0].real[0]:%s' % input_items[0].real[0] 
 		if len(input_items) != 1:
 			raise Exception('The number of input items should be one only.')
-		out = numpy.fmin(input_items[0], self.limval)
-		out = numpy.multiply(input_items[0], self.mulval)
-		output_items[:] = out
+		out = input_items[0]
+		out = numpy.fmin(out, self.limval)
+		out = numpy.multiply(out, self.mulval)
+		if self.count % 1000 == 0:
+			self.count = 0
+			print 'DBG:LIMITER<%s> out.real[0]:%f out.imag[0]:%f limval:%s mulval:%s' % (self, out.real[0], out.imag[0], self.limval, self.mulval)
+		output_items[0][:] = out
 		return len(out)
 
 	def set_mulval(self, mulval):
@@ -265,6 +263,17 @@ class ChanOverProxy:
 	pass
 
 class YaesuBC(qtgui4.QWidget):
+	def update_all_channels(self):
+		self.tb.lock()
+		for channel in self.vchannels:
+			channel.update(
+				self.q_rx_cfreq.get_value(), 
+				self.q_tx_cfreq.get_value(), 
+				self.q_rx_sps.get_value(), 
+				self.q_tx_sps.get_value()
+			)
+		self.tb.unlock()
+
 	def __init__(self):
 		qtgui4.QWidget.__init__(self)
 		self.tb = gr.top_block()
@@ -407,17 +416,25 @@ class YaesuBC(qtgui4.QWidget):
 
 		def change_freq(dev, value):
 			dev.set_center_freq(value)
+			self.update_all_channels()
 
-		def change_rxgain(dev, value):
+		def change_gain(dev, value):
+			# TODO: check maximum gain levels of device
+			#       used and also check since they are
+			#       different per RX and TX
 			if value > 73:
+				# OK, for USRP B200
 				value = 73
 			dev.set_gain(value)
+			update_all_channels()
 		
 		def change_bw(dev, value):
 			dev.set_bandwidth(value)
+			update_all_channels()
 		
 		def change_sps(dev, value):
 			dev.set_samp_rate(value)
+			update_all_channels()
 
 		def change_vol(value):
 			pass
@@ -430,15 +447,15 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.qfft.set_sps(start_sps)
 
-		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=lambda v: change_freq(self.rx, v), xdef=90000000)
-		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=lambda v: change_rxgain(self.rx, v), xdef=70)
+		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=lambda v: change_freq(self.rx, v), xdef=146000000)
+		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=lambda v: change_gain(self.rx, v), xdef=70)
 		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=lambda v: change_bw(self.rx, v), xdef=63500)
 		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=lambda v: change_sps(self.rx, v), xdef=4)
 
-		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, xdef=90000000)
-		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, xdef=0)
-		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, xdef=63500)
-		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, xdef=4)
+		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, xdef=146000000, signal=lambda v: change_freq(self.btx, v))
+		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, xdef=0, signal=lambda v: change_gain(self.btx, v))
+		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, xdef=63500, signal=lambda v: change_bw(self.btx, v))
+		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, xdef=4, signal=lambda v: change_sps(self.btx, v))
 
 		self.q_vol = qlcdnumberadjustable.QLCDNumberAdjustable(label='VOL', digits=2, signal=change_vol, xdef=50)
 		self.q_tx_pwr_max = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX PWR MAX', digits=3, signal=change_vol, xdef=50, max=100)
@@ -457,16 +474,18 @@ class YaesuBC(qtgui4.QWidget):
 		self.rx = uhd.usrp_source(device_addr='', stream_args=uhd.stream_args('fc32'))
 		self.rx.set_center_freq(self.q_rx_cfreq.get_value())
 		self.rx.set_bandwidth(self.q_rx_bw.get_value())
-		self.rx.set_gain(0)
+		self.rx.set_gain(73)
 		self.rx.set_antenna('RX2')
 		self.rx.set_samp_rate(self.q_rx_sps.get_value())
 
 		self.btx = uhd.usrp_sink(device_addr='', stream_args=uhd.stream_args('fc32'))
 		self.btx.set_center_freq(self.q_tx_cfreq.get_value())
 		self.btx.set_bandwidth(self.q_tx_bw.get_value())
-		self.btx.set_gain(0)
+		self.btx.set_gain(1)
 		self.btx.set_antenna('TX/RX')
 		self.btx.set_samp_rate(self.q_tx_sps.get_value())
+
+		#self.btx = debug.Debug(numpy.dtype(numpy.complex64), tag='USRPTX')
 
 		#self.btx = blocks.file_sink(8, '/home/kmcguire/dump.test')
 
@@ -507,11 +526,13 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.vchannels = []
 
-		self.a = Debug()
+		self.a = debug.Debug(numpy.dtype(numpy.float32), tag='AUDIORX')
 		self.b = audio.sink(16000, '', True)
-		self.tb.connect(self.a, self.b)
+		#self.tb.connect(self.a, self.b)
 
-		self.audio_sink2 = BlockMultipleAdd(self.tb, self.a)
+		self.tb.connect(self.rx, debug.Debug(numpy.dtype(numpy.complex64), 'USRPRX'))	
+
+		self.audio_sink = BlockMultipleAdd(self.tb, self.a)
 		self.audio_source = audio.source(16000)
 
 		'''

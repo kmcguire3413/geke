@@ -110,7 +110,6 @@ class BlockMultipleAdd:
 		self.tb = tb
 		self.block_sink = block
 		if throttle is not None:
-			print 'added throttle block'
 			if bcomplex:
 				self.throttle = blocks.throttle(8, throttle)
 			else:
@@ -144,51 +143,49 @@ class BlockMultipleAdd:
 		self.recalpwrpri()
 
 	def connect(self, txblock, pwrprimon=None):
+		print 'CONNECT_ALL_MAP'
+		for ain in self.ins:
+			print ain
+
 		for x in xrange(0, len(self.ins)):
 			if self.ins[x][0] is txblock or self.ins[x][2] is txblock:
 				return False
-		print 'disconnecting all'
 		self.__disconnect_all()
-		print '@@@@'
 		if pwrprimon is not None:
-			print 'instancing limiter'
 			moder = Limiter()
 			moder.set_limval(1.0)
 			moder.set_mulval(0.0)
-			print 'registering and txblock'
 			self.ins.append([moder, None, txblock, pwrprimon])
-			print 'connecting txblock and limiter'
-			print 'done'
 		else:
-			print 'BASIC ADD', txblock
 			self.ins.append([txblock, None, None, pwrprimon])
 		dnode = BlockMultipleAdd.DisconnectNode()
 		dnode.txblock = txblock
 		dnode.am = self
-		print 'connecting all'
-		self.__connect_all()
+		self.__connect_all()		
 		return dnode
 
 	def disconnect(self, txblock):
 		self.tb.lock()
 		self.__disconnect_all()
-		print 'BlockMultipleAdd.disconnect: trying to disconnect %s' % txblock
 		for x in xrange(0, len(self.ins)):
 			# Check both basic TXBLOCK and also limited TXBLOCK
-			print '  check %s and %s against %s' % (self.ins[x][0], self.ins[x][3], txblock)
+			#print '  check %s and %s against %s' % (self.ins[x][0], self.ins[x][3], txblock)
 			if self.ins[x][0] is txblock or self.ins[x][2] is txblock:
-				self.ins.pop(x)
-				print '  found; removed'
+				tmp = self.ins.pop(x)
+				print '  found; removed', tmp
 				break
 		self.__connect_all()
 		self.tb.unlock()
 
 	def __disconnect_all(self):
-		print 'locking'
 		sys.stdout.flush()
 		self.tb.lock()
-		print 'locked'
 		sys.stdout.flush()
+
+		print 'DISCONNECT_ALL_MAP'
+		for ain in self.ins:
+			print ain
+
 		try:
 			if self.throttle is not None:
 				self.tbdisconnect(self.throttle, self.block_sink2, 'A')
@@ -197,44 +194,62 @@ class BlockMultipleAdd:
 			# the very first time and we support recurrent calling
 			# of this function for safety.
 			print 'exception', e
-		print 'next stage'
+
 		sys.stdout.flush()
+		if len(self.ins) > 0:
+			try:
+				self.tbdisconnect(self.ins[0][1], self.block_sink, 'K1')
+			except Exception as e:
+				print 'exception', e, 0
+			try:
+				self.tbdisconnect(self.ins[0][0], self.block_sink, 'K2')
+			except Exception as e:
+				print 'exception', e, 0
+			try:
+				self.tbdisconnect(self.ins[0][0], (self.ins[0][1], 0), 'K3')
+			except Exception as  e:
+				print 'exception', e, 0
+
 		for x in xrange(0, len(self.ins)):
-			print 'x:%s' % x
 			sys.stdout.flush()
 			if x == 0:
-				try:
-					self.tbdisconnect(self.ins[x][0], self.block_sink, 'B')
-				except Exception as e:
-					print 'exception', e
+				pass
 			else:
+				print '--', self.ins[x]
+				# Try straight down.
 				try:
 					self.tbdisconnect(self.ins[x][1], self.ins[x-1][1], 'C')
+					print 'straight across', x
 				except Exception as e:
-					print 'exception', e
-				if self.ins[x][1] is not None:
-					try:
-						self.tbdisconnect(self.ins[x][0], self.ins[x][1], 'D')
-					except Exception as e:
-						print 'exception', e
+					print 'exception', e, x
+				# Try across.
+				try:
+					self.tbdisconnect(self.ins[x][0], (self.ins[x][1], 0) , 'D')
+					print 'across', x
+				except Exception as e:
+					print 'exception', e, x
+				# Try straight down and across.
+				try:
+					self.tbdisconnect(self.ins[x][0], (self.ins[x - 1][1], 1) , 'H')
+					print 'down and across', x
+				except Exception as e:
+					print 'exception', e, x
+
+		# This breaks any limiter connections.
 		for x in xrange(0, len(self.ins)):
 			if self.ins[x][2] is not None:
 				self.tbdisconnect(self.ins[x][2], self.ins[x][0], 'V')
-		print 'unlocking'
+
 		sys.stdout.flush()
-		print '... here goes ...'
 		sys.stdout.flush()
 		self.tb.unlock()
-		print 'unlocked'
 		sys.stdout.flush()
 
 	def tbdisconnect(self, a, b, tag):
-		print 'disconnect [%s] %s ---> %s' % (tag, a, b)
 		sys.stdout.flush()
 		self.tb.disconnect(a, b)
 
 	def tbconnect(self, a, b, tag):
-		print 'connect [%s] %s ---> %s' % (tag, a, b)
 		sys.stdout.flush()
 		self.tb.connect(a, b)
 
@@ -250,20 +265,23 @@ class BlockMultipleAdd:
 					else:
 						self.ins[x][1] = blocks.add_ff()
 					self.ins[x][1].set_min_noutput_items(8192)
-		print 'graph', self.ins
 		if len(self.ins) == 0:
  			self.tb.unlock()
 			return True
+
+		# Connect limiters that act like a normal block.
 		for x in xrange(0, len(self.ins)):
 			if self.ins[x][2] is not None:
 				self.tbconnect(self.ins[x][2], self.ins[x][0], 'RXBLOCKMODER')
+
+		# Special case #1 (single)
 		if len(self.ins) == 1:
 			if self.throttle is not None:
 				self.tbconnect(self.throttle, self.block_sink2, 'Z2')
 			self.tbconnect(self.ins[0][0], self.block_sink, 'Z1')
 			self.tb.unlock()
 			return True 
-		#self.tbconnect(self.throttle, self.audio_sink, 'A')
+
 		for x in xrange(0, len(self.ins)):
 			if x == len(self.ins) - 1:
 				# Do not connect across, but at a diagonal.
@@ -275,8 +293,7 @@ class BlockMultipleAdd:
 					self.tbconnect(self.ins[x][1], self.block_sink, 'F' + str(x))
 				else:
 					self.tbconnect(self.ins[x][1], (self.ins[x-1][1], 1), 'D' + str(x))
-				self.tbconnect(self.ins[x][0], self.ins[x][1], 'E' + str(x))
-		print 'DONE'
+				self.tbconnect(self.ins[x][0], (self.ins[x][1], 0) , 'E' + str(x))
 		self.tb.unlock()
 		return True
 
@@ -348,8 +365,8 @@ class YaesuBC(qtgui4.QWidget):
 			self.old_connect(*args)
 
 		def __disconnect(self, a, b):
-			sys.stderr.write('DISCONNECT %s -> %s\n' % (a, b))
 			self.old_disconnect(a, b)
+			sys.stderr.write('DISCONNECT %s -> %s\n' % (a, b))
 
 		setattr(self.tb, 'old_disconnect', self.tb.disconnect)
 		setattr(self.tb, 'disconnect', types.MethodType(__disconnect, self.tb))
@@ -555,8 +572,8 @@ class YaesuBC(qtgui4.QWidget):
 		self.tb.connect(self.rx_add, self.rx)
 		'''
 
-		#self.middle.set_src_blk(self.rx)
-		#self.middle.change(512, 64)
+		self.middle.set_src_blk(self.rx)
+		self.middle.change(512, 64)
 
 		self.tb.start()	
 

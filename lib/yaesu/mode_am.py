@@ -94,14 +94,10 @@ class AM(ModeShell):
 		was_active = self.active
 		self.off()
 
-		print 'tx_loc_freq:%s rx_loc_freq:%s' % (tx_loc_freq, rx_loc_freq)
-
 		if abs(tx_loc_freq) > txsps * 0.75:
 			self.tx_vol = None
 			self.rxtxstatus.set_tx_status(False)
-			print 'TX OFF'
 		else:
-			print 'TX ON'
 			self.tx_vol = blocks.multiply_const_ff(tx_audio_mul)
 			self.tx_sq = analog.standard_squelch(audio_rate=16000)
 			self.tx_sq.set_threshold(tx_sqval / 10.0)
@@ -118,9 +114,7 @@ class AM(ModeShell):
 		if abs(rx_loc_freq) > rxsps * 0.75:
 			self.rx_if0 = None
 			self.rxtxstatus.set_rx_status(False)
-			print 'RX OFF'
 		else:
-			print 'RX ON'
 			# Early failure is okay. Better false positive that TX is ON.
 			self.rxtxstatus.set_rx_status(True)
 			self.rx_if0 = analog.sig_source_c(rxsps, analog.GR_COS_WAVE, -rx_loc_freq, 0.1, 0)
@@ -157,11 +151,8 @@ class AM(ModeShell):
 			self.connect(self.rx_cms, debug.Debug(xtype=numpy.dtype(numpy.float32), tag='RX AFTER STEP B'))
 
 			self.audio_disconnect_node = self.audio_tx.connect(self.rx_vol)
-		print 'about to unlock'
 		self.tb.unlock()
-		print 'unlocking'
 		self.chanover.change_active(True)
-		print 'ON'
 
 	def off(self):
 		ModeShell.off(self)
@@ -175,4 +166,3 @@ class AM(ModeShell):
 			self.audio_disconnect_node = None
 		self.chanover.change_active(False)
 		self.tb.unlock()
-		print 'OFF'

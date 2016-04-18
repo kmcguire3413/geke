@@ -143,7 +143,6 @@ class QFastFFT(qtgui4.QWidget):
 		self.update()
 
 	def paintEvent(self, event):
-		return
 		qp = qtgui4.QPainter(self)
 		self.fast_paint_no_scroll(event, qp)
 		#self.slow_paint_scroll(event)

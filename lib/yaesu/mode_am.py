@@ -110,7 +110,7 @@ class AM(ModeShell):
 			self.tx_ssb_shifter_mul = blocks.multiply_cc()
 			self.tx_ssb_shifter = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_ssb_shifter_freq, 0.1, 0)
 			self.tx_lpf = filter.interp_fir_filter_ccf(int(txsps / 16000), filter.firdes.low_pass(int(tx_filter_gain), txsps, tx_cutoff_freq, tx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
-			self.tx_if0 = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_loc_freq, 0.1, 0)		
+			self.tx_if0 = analog.sig_source_c(txsps, analog.GR_COS_WAVE, tx_loc_freq, 0.1, 0)	
 			self.tx_if0_mul = blocks.multiply_cc()
 			# Late failure is okay. Better false negative than RX is OFF.
 			self.rxtxstatus.set_tx_status(True)
@@ -151,6 +151,8 @@ class AM(ModeShell):
 			self.connect(self.rx, (self.rx_if0_mul, 0))
 			self.connect(self.rx_if0, (self.rx_if0_mul, 1))
 			self.connect(self.rx_if0_mul, self.rx_lpf, self.rx_cms, self.rx_vol)
+
+			self.connect(self.rx, debug.Debug(xtype=numpy.dtype(numpy.complex64), tag='RX FROM USRP'))
 			self.connect(self.rx_if0_mul, debug.Debug(xtype=numpy.dtype(numpy.complex64), tag='RX AFTER STEP A'))
 			self.connect(self.rx_cms, debug.Debug(xtype=numpy.dtype(numpy.float32), tag='RX AFTER STEP B'))
 

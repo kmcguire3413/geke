@@ -26,6 +26,38 @@ import lib.qlcdnumberadjustable as qlcdnumberadjustable
 import lib.yaesu.mode_am as mode_am
 import lib.yaesu.mode_fm as mode_fm
 
+class OneShot(gr.sync_block):
+	"""
+	A block that emits a specific value until provided with
+	samples which then emits those samples and afterwards 
+	provides zeros. This block allows the ability to inject
+	values into the stream disjointly.
+	"""
+	def __init__(self, dtype, value):
+		gr.sync_block.__init__(self, 'PyOneShot', in_sig=[], out_sig=[numpy.dtype(dtype)])
+		self.tosend = value
+		self.needsend = False
+		self.empty = ''
+
+	def send(self):
+		self.needsend = True
+
+	def work(self, input_items, output_items):
+		needout = len(output_items[0])
+
+		if len(self.empty) < needout:
+			self.empty = numpy.array([0] * needout)
+
+		if self.needsend:
+			send = self.tosend
+			print 'needout:%s len(send):%s' % (needout, len(send))
+			output_items[0][:] = numpy.concatenate((send, self.empty[0:needout - len(send)]))
+			self.needsend = False
+			return len(output_items[0])
+
+		output_items[0][:] = self.empty[0:needout]
+		return len(self.empty)
+
 class Limiter(gr.sync_block):
 	"""
 	A block that applies a complex number magnitude limiting value
@@ -124,12 +156,11 @@ class BlockMultipleAdd:
 			moder.set_limval(1.0)
 			moder.set_mulval(0.0)
 			print 'registering and txblock'
-			self.ins.append([
-				moder, None, txblock, pwrprimon
-			])
+			self.ins.append([moder, None, txblock, pwrprimon])
 			print 'connecting txblock and limiter'
 			print 'done'
 		else:
+			print 'BASIC ADD', txblock
 			self.ins.append([txblock, None, None, pwrprimon])
 		dnode = BlockMultipleAdd.DisconnectNode()
 		dnode.txblock = txblock
@@ -215,13 +246,13 @@ class BlockMultipleAdd:
 			else:
 				if self.ins[x][1] is None:
 					if self.bcomplex is True:
-						self.ins[x][1] = blocks.add_ff()
-					else:
 						self.ins[x][1] = blocks.add_cc()
-					self.ins[x][1].set_min_noutput_items(8192 * 32)
+					else:
+						self.ins[x][1] = blocks.add_ff()
+					self.ins[x][1].set_min_noutput_items(8192)
 		print 'graph', self.ins
 		if len(self.ins) == 0:
-			self.tb.unlock()
+ 			self.tb.unlock()
 			return True
 		for x in xrange(0, len(self.ins)):
 			if self.ins[x][2] is not None:
@@ -296,6 +327,7 @@ class YaesuBC(qtgui4.QWidget):
 			print 'top_block unlock called by thread:%s' % tident
 			self.lockdepth -= 1
 			if self.lockdepth == 0:
+				print 'UNLOCKED'
 				self.old_unlock()
 
 		def __lock(self):
@@ -523,20 +555,20 @@ class YaesuBC(qtgui4.QWidget):
 		self.tb.connect(self.rx_add, self.rx)
 		'''
 
-		self.middle.set_src_blk(self.rx)
-		self.middle.change(512, 64)
+		#self.middle.set_src_blk(self.rx)
+		#self.middle.change(512, 64)
 
 		self.tb.start()	
 
 		self.vchannels = []
 
-		self.a = debug.Debug(numpy.dtype(numpy.float32), tag='AUDIORX')
+		#self.a = debug.Debug(numpy.dtype(numpy.float32), tag='AUDIORX')
 		self.b = audio.sink(16000, '', True)
 		#self.tb.connect(self.a, self.b)
 
-		self.tb.connect(self.rx, debug.Debug(numpy.dtype(numpy.complex64), 'USRPRX'))	
+		#self.tb.connect(self.rx, debug.Debug(numpy.dtype(numpy.complex64), 'USRPRX'))	
 
-		self.audio_sink = BlockMultipleAdd(self.tb, self.a, bcomplex=False)
+		self.audio_sink = BlockMultipleAdd(self.tb, self.b, bcomplex=False)	
 		self.audio_source = audio.source(16000)
 
 		'''
@@ -619,11 +651,13 @@ class YaesuBC(qtgui4.QWidget):
 			right.hide()
 
 		beep = []
-		for x in xrange(0, 16000):
+		for x in xrange(0, 4000):
 			theta = float(x) / 16000.0 * (1000.0 + float(x) * 0.20) * math.pi * 2.0
 			beep.append(math.sin(theta))
 
-		self.uibeeper = blocks.vector_source_f(beep)
+		# A custom block may be well in this situation. Capable
+		# of doing a one shot operation.
+		self.uibeeper = OneShot(numpy.float32, numpy.array(beep))
 		self.audio_sink.connect(self.uibeeper)
 
 		self.cur_chan = 0
@@ -644,4 +678,4 @@ class YaesuBC(qtgui4.QWidget):
 		self.q_map.set_chan_current(ndx % len(self.vchannels))
 		chan = self.vchannels[self.cur_chan]
 		print '$$1', chan.get_left().show()
-		print '$$2', chan.get_right().show()
+		print '$$2', chan.get_right().show()  

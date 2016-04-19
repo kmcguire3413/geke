@@ -38,14 +38,24 @@ class OneShot(gr.sync_block):
 		self.tosend = value
 		self.needsend = False
 		self.empty = ''
+		self.callcount = 0
+		self.last_t = time.time()
+		self.start_t = time.time()
 
 	def send(self):
 		self.needsend = True
 
 	def work(self, input_items, output_items):
+		self.callcount += 1
 		needout = len(output_items[0])
 
+		if time.time() - self.last_t > 5:
+			self.last_t = time.time()
+			cps = self.callcount / (time.time() - self.start_t)
+			print 'cps is %s while total time is %s and call count is %s' % (cps, time.time() - self.start_t, self.callcount)
+
 		if len(self.empty) < needout:
+			print 'empty', needout
 			self.empty = numpy.array([0] * needout)
 
 		if self.needsend:
@@ -53,10 +63,10 @@ class OneShot(gr.sync_block):
 			print 'needout:%s len(send):%s' % (needout, len(send))
 			output_items[0][:] = numpy.concatenate((send, self.empty[0:needout - len(send)]))
 			self.needsend = False
-			return len(output_items[0])
+			return needout
 
 		output_items[0][:] = self.empty[0:needout]
-		return len(self.empty)
+		return needout
 
 class Limiter(gr.sync_block):
 	"""
@@ -88,6 +98,89 @@ class Limiter(gr.sync_block):
 
 	def set_limval(self, limval):
 		self.limval = limval
+
+class LimterMultiplexer(gr.sync_block):
+	class DisconnectObject:
+		def __init__(self, lm, xin):
+			self.lm = lm
+			self.xin = xin
+
+		def disconnect(self):
+			self.lm.disconnect_input(self.xin)
+
+	def __init__(self, tb, dtype, dtsize, maxinputs):
+		gr.sync_block.__init__(self, 'PyCombiner', in_sig=[numpy.dtype(dtype)] * maxinputs, out_sig=[numpy.dtype(dtype)])
+		self.limvals = [0.0] * maxinputs
+		self.mulvals = [0.0] * maxinputs
+		self.mlimstage = True
+		self.dtype = numpy.dtype(dtype)
+		self.input_blocks = [None] * maxinputs
+		self.tb = tb
+		self.null_src = blocks.null_source(dtsize)
+		for indx in xrange(0, len(self.input_blocks)):
+			self.input_blocks[indx] = self.null_src
+			self.tb.connect(self.null_src, (self, indx))
+
+	def disconnect_all_inputs(self):
+		self.tb.lock()
+		for blk in self.input_blocks:
+			self.tb.disconnect(blk, self)
+		self.tb.unlock()
+
+	def disconnect_input(self, f):
+		self.tb.lock()
+		for x in xrange(0, len(self.input_blocks)):
+			if self.input_blocks[x] is f:
+				self.input_blocks.pop(x)
+				self.tb.disconnect(f, (self, x))
+				self.input_blocks[x] = self.null_src
+				self.tb.connect(self.null_src, (self, x))
+				break
+		self.tb.unlock()
+		return LimterMultiplexer.DisconnectObject(self, f)
+
+	def connect(self, f):
+		return self.connect_input(f)
+
+	def get_free_input_index(self):
+		for x in xrange(0, len(self.input_blocks)):
+			if self.input_blocks[x] is self.null_src:
+				return x
+		return None
+
+	def connect_input(self, f):
+		self.tb.lock()
+		indx = self.get_free_input_index()
+		self.tb.disconnect(self.input_blocks[indx], (self, indx))
+		self.input_blocks[indx] = f
+		self.tb.connect(f, (self, indx))
+		self.tb.unlock()
+
+	def connect_output(self, into):
+		self.tb.lock()
+		self.tb.connect(self, into)
+		self.tb.unlock()
+
+	def work(self, input_items, output_items):
+		if self.mlimstage:
+			for x in xrange(0, len(input_items)):
+				if self.input_blocks[x] is self.null_src:
+					continue
+				ia = input_items[x]
+				ia = numpy.fmin(ia, self.limvals[x])
+				ia = numpy.multiply(ia, self.mulvals[x])
+				input_items[x] = ia
+
+		bsize = len(output_items[0])
+
+		cur = numpy.zeros(bsize, self.dtype)
+		for x in xrange(0, len(input_items)):
+			if self.input_blocks[x] is self.null_src:
+				continue
+			numpy.add(cur, input_items[x], cur)
+
+		output_items[0] = cur
+		return len(cur)
 
 class BlockMultipleAdd:
 	"""
@@ -579,14 +672,14 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.vchannels = []
 
-		#self.a = debug.Debug(numpy.dtype(numpy.float32), tag='AUDIORX')
 		self.b = audio.sink(16000, '', True)
-		#self.tb.connect(self.a, self.b)
 
-		#self.tb.connect(self.rx, debug.Debug(numpy.dtype(numpy.complex64), 'USRPRX'))	
+		self.audio_sink_base = audio.sink(16000) 
+		self.audio_sink = LimterMultiplexer(tb=self.tb, dtype=numpy.float32, dtsize=4, maxinputs=4)
+		self.tb.connect(self.audio_sink, self.audio_sink_base)
 
-		self.audio_sink = BlockMultipleAdd(self.tb, self.b, bcomplex=False)	
 		self.audio_source = audio.source(16000)
+		#self.audio_source = blocks.null_source(4)
 
 		'''
 			Configure the channels.

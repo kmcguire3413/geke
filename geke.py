@@ -8,6 +8,7 @@ import struct
 import math
 import random
 import types
+import cProfile
 
 from PyQt4 import QtCore as qtcore4
 from PyQt4 import QtGui as qtgui4

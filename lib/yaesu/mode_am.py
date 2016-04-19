@@ -42,6 +42,14 @@ class AM(ModeShell):
 		txsps = float(txsps)
 		self.txsps = txsps
 
+		pre = [
+			'tx_vol', 'tx_sq', 'tx_cnst_src', 'tx_ftc', 'tx_ssb_shifter_mul',
+			'tx_ssb_shifter', 'tx_lpf', 'tx_if0', 'tx_if0_mul', 'rx_if0', 'rx_if0_mul',
+			'rx_lpf', 'rx_cms', 'rx_vol', 'sqblock'
+		]
+		for q in pre:
+			setattr(self, q, None)		
+
 		freq = self.freq.get_value()
 		tx_audio_mul = self.tx_audio_mul.get_value()
 		tx_ssb_shifter_freq = self.ssb_shifter_freq.get_value()
@@ -59,6 +67,14 @@ class AM(ModeShell):
 		tx_loc_freq = freq - txcenter
 		rx_loc_freq = freq - rxcenter
 
+		if self.key_changed == 'qtx_sq' and self.tx_sq:
+			self.tx_sq.set_threshold(tx_sqval / 100.0)
+			return
+
+		if self.key_changed == 'qrx_sq' and self.sqblock:
+			self.sqblock_sq.set_threshold(rx_sqval / 100.0)
+			return
+
 		if self.key_changed == 'freq':
 			freq = self.freq.get_value()
 			tx_loc_freq = freq - txcenter
@@ -72,7 +88,7 @@ class AM(ModeShell):
 			if self.rx_if0 is not None and self.tx_vol is not None:
 				return
 
-		if self.key_changed == 'ssb_shifter_freq':
+		if self.key_changed == 'ssb_shifter_freq' and self.tx_ssb_shifter:
 			self.tx_ssb_shifter.set_frequency(tx_ssb_shifter_freq)
 			return
 
@@ -81,11 +97,11 @@ class AM(ModeShell):
 			self.rx_lpf.set_taps(filter.firdes.low_pass(int(rx_filter_gain), rxsps, rx_cutoff_freq, rx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
 			return
 
-		if self.key_changed == 'tx_filter_gain':
+		if self.key_changed == 'tx_filter_gain' and self.tx_lpf:
 			self.tx_lpf.set_taps(filter.firdes.low_pass(int(tx_filter_gain), txsps, tx_cutoff_freq, tx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
 			return
 
-		if self.key_changed == 'rx_filter_gain':
+		if self.key_changed == 'rx_filter_gain' and self.rx_lpf:
 			self.rx_lpf.set_taps(filter.firdes.low_pass(int(rx_filter_gain), rxsps, rx_cutoff_freq, rx_cutoff_width, filter.firdes.WIN_BLACKMAN, 6.76))
 			return
 
@@ -100,7 +116,7 @@ class AM(ModeShell):
 		else:
 			self.tx_vol = blocks.multiply_const_ff(tx_audio_mul)
 			self.tx_sq = analog.standard_squelch(audio_rate=16000)
-			self.tx_sq.set_threshold(tx_sqval / 10.0)
+			self.tx_sq.set_threshold(tx_sqval / 100.0)
 			self.tx_cnst_src = analog.sig_source_f(int(16000), analog.GR_CONST_WAVE, 0, 0, 0)
 			self.tx_ftc = blocks.float_to_complex()
 			self.tx_ssb_shifter_mul = blocks.multiply_cc()

@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <limits>
 #include <cmath>
+#include <stdint.h>
 
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 #include <numpy/arrayobject.h>
@@ -25,6 +26,88 @@ class PyObjectW {
 };
 
 #define DW(x) (x.obj)
+#define DW_DOUBLE(x) (PyFloat_AsDouble(DW(x))) 
+#define DW_DOUBLE_GETITEM(x, y) (PyFloat_AsDouble(DW(PyObjectW(PySequence_GetItem((x), (y))))))
+#define PYX_GETITEM_VALUE(f, a, i) (f(PyObjectW(PySequence_GetItem(a, i)).obj))
+#define PYX_GETKEY_VALUE(f, a, k) (f(PyObjectW(PyObject_GetAttrString(a, k))))
+#define ANGLEDIFF(th, lth) (fmod(((th) - (lth)) + M_PI, M_PI * 2.0) - M_PI);
+
+/*
+static PyObject *geke_spin_and_limit(PyObject *self, PyObject *args) {
+	double 		rot_limit = PYX_GETKEY_VALUE(PyFloat_AsDouble, args, "rot_limit");
+	double 		theta_inc = PYX_GETKEY_VALUE(PyFloat_AsDouble, args, "theta_inc");
+	float 		lth = PYX_GETKEY_VALUE(PyFloat_AsDouble, args, "lth");
+	float 		lmag = PYX_GETKEY_VALUE(PyFloat_AsDouble, args, "lmag");
+	Py_buffer   *fft_filter = PYX_GETKEY_VALUE(PyMemoryView_GET_BUFFER, args, "fft_filter");
+
+	PyObjectW   po_seq = PyObjectW(PySequence_GetItem(args, 0));
+
+	float  		th = 0.0;
+	float       mag = 0.0;
+
+	NpyIter *iter = NpyIter_New((PyArrayObject*)DW(po_seq), 
+		NPY_ITER_READWRITE | 
+		NPY_ITER_EXTERNAL_LOOP | 
+		NPY_ITER_ALIGNED, 
+		NPY_KEEPORDER, 
+		NPY_NO_CASTING, 
+		NULL
+	);
+
+	NpyIter_IterNextFunc *iternext = NpyIter_GetIterNext(iter, NULL);
+	double **dataptr = (double**)NpyIter_GetDataPtrArray(iter);
+	npy_intp *strideptr = NpyIter_GetInnerStrideArray(iter);
+	npy_intp *innersizeptr = NpyIter_GetInnerLoopSizePtr(iter);
+
+	// hard limiting filter
+	double   	adjusted = 0.0;
+	int   		z = 0;
+	double      thavg = 0.0;
+
+	do {
+		double *buf 		= *dataptr;
+		npy_intp stride   	= *strideptr;
+		npy_intp count      = *innersizeptr;
+
+		printf("stride:%i count:%i\n", stride, count);
+
+		for (int z = 0; z < count / 2; ++z) {
+			//float   x = buf[z*2+0];
+			//float   y = buf[z*2+1];
+			double     x = buf[z*2+0];// * 6.0;
+			double     y = buf[z*2+1];// * 6.0;
+
+			th = atan2(y, x) + adjusted;
+			mag = sqrt(x * x + y * y);
+
+			//dth = th - lth
+			//dth = math.fmod((dth + math.pi), math.pi * 2.0) - math.pi
+
+			double dth = fmod((th - lth) + M_PI, M_PI * 2.0) - M_PI;
+
+			double old_th = th;
+			if (fabs(dth) > rot_limit) {
+				th = lth;
+			}
+
+			if (z > 200 && z < 300) {
+				printf("limited:%i z:%i th:%f old_th:%f lth:%f dth:%f rot_limit:%f\n", fabs(dth) > rot_limit, z, th, old_th, lth, dth, rot_limit);
+			}
+
+			buf[z*2+0] = cos(th + theta_inc * z) * mag;
+			buf[z*2+1] = sin(th + theta_inc * z) * mag;
+
+			lth = th;
+			lmag = mag;
+		}
+	} while (iternext(iter));
+
+	NpyIter_Deallocate(iter);
+
+	PyObject *ret = PyTuple_Pack(2, PyFloat_FromDouble(th), PyFloat_FromDouble(mag));
+	return ret;	
+}
+*/
 
 static PyObject *geke_system(PyObject *self, PyObject *args) {
 	//PyObjectW 	  po_state;
@@ -163,6 +246,7 @@ static PyObject *geke_system(PyObject *self, PyObject *args) {
 
 static PyMethodDef ModMethods[] = {
     { "system",  geke_system, METH_VARARGS, "A test method." },
+    //{ "spin_and_limit", geke_spin_and_limit, METH_VARARGS, "Hard filter limit then rotator in one operation." },
     { NULL, NULL, 0, NULL }        /* Sentinel */
 };
 

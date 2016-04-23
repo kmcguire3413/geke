@@ -67,11 +67,17 @@ class AM(ModeShell):
 		tx_loc_freq = freq - txcenter
 		rx_loc_freq = freq - rxcenter
 
-		if self.key_changed == 'qtx_sq' and self.tx_sq:
+		print '@@@@@@@@@@ KEY CHANGED WAS %s' % self.key_changed
+
+		if self.key_changed == 'txpwrpri':
+			print '$$$$ RETURNING'
+			return
+
+		if self.key_changed == 'qtx_sq' and self.tx_sq is not None:
 			self.tx_sq.set_threshold(tx_sqval / 100.0)
 			return
 
-		if self.key_changed == 'qrx_sq' and self.sqblock:
+		if self.key_changed == 'qrx_sq' and self.sqblock is not None:
 			self.sqblock_sq.set_threshold(rx_sqval / 100.0)
 			return
 
@@ -116,7 +122,7 @@ class AM(ModeShell):
 		else:
 			self.tx_vol = blocks.multiply_const_ff(tx_audio_mul)
 			self.tx_sq = analog.standard_squelch(audio_rate=16000)
-			self.tx_sq.set_threshold(tx_sqval / 100.0)
+			self.tx_sq.set_threshold(0.0) # tx_sqval / 100.0
 			self.tx_cnst_src = analog.sig_source_f(int(16000), analog.GR_CONST_WAVE, 0, 0, 0)
 			self.tx_ftc = blocks.float_to_complex()
 			self.tx_ssb_shifter_mul = blocks.multiply_cc()
@@ -150,23 +156,32 @@ class AM(ModeShell):
 		ModeShell.on(self)
 		self.tb.lock()
 		if self.tx_vol is not None:
-			self.connect(self.audio_rx, self.tx_vol, self.tx_sq, (self.tx_ftc, 0))
+			print '@@@@@ connecting tx blocks;'
+			#self.tx_tmp = blocks.null_source(4)
+			#self.connect(self.tx_tmp, self.tx_vol, (self.tx_ftc, 0))
+			
+			self.connect(self.audio_rx, self.tx_vol, (self.tx_ftc, 0))
 			self.connect(self.tx_cnst_src, (self.tx_ftc, 1))
-			self.connect(self.tx_ftc, (self.tx_ssb_shifter_mul, 0), self.tx_lpf, (self.tx_if0_mul, 0))
+			
+			self.connect(self.tx_ftc, (self.tx_ssb_shifter_mul, 0))
 			self.connect(self.tx_ssb_shifter, (self.tx_ssb_shifter_mul, 1))
+
+			self.connect(self.tx_ssb_shifter_mul, self.tx_lpf, (self.tx_if0_mul, 0))
 			self.connect(self.tx_if0, (self.tx_if0_mul, 1))
+			
 			self.connect(self.tx_if0_mul, debug.Debug(xtype=numpy.dtype(numpy.complex64), tag='FROM TX LAST BLOCK'))
-			self.tx_disconnect_node = self.tx.connect(txblock=self.tx_if0_mul, pwrprimon=self.txpwrpri)
+			
+			self.tx_disconnect_node = self.tx.connect(
+				txblock=self.tx_if0_mul, 
+				pwrprimon=self.txpwrpri
+			)
 		if self.rx_if0 is not None:
 			self.connect(self.rx, (self.rx_if0_mul, 0))
 			self.connect(self.rx_if0, (self.rx_if0_mul, 1))
 			self.connect(self.rx_if0_mul, self.rx_lpf, self.rx_cms, self.rx_vol)
-
-			self.connect(self.rx, debug.Debug(xtype=numpy.dtype(numpy.complex64), tag='RX FROM USRP'))
-			self.connect(self.rx_if0_mul, debug.Debug(xtype=numpy.dtype(numpy.complex64), tag='RX AFTER STEP A'))
-			self.connect(self.rx_cms, debug.Debug(xtype=numpy.dtype(numpy.float32), tag='RX AFTER STEP B'))
-
-			self.audio_disconnect_node = self.audio_tx.connect(self.rx_vol)
+			self.audio_disconnect_node = self.audio_tx.connect(
+				self.rx_vol
+			)
 		self.tb.unlock()
 		self.chanover.change_active(True)
 
@@ -182,3 +197,7 @@ class AM(ModeShell):
 			self.audio_disconnect_node = None
 		self.chanover.change_active(False)
 		self.tb.unlock()
+
+
+
+

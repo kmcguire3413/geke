@@ -99,7 +99,10 @@ class Limiter(gr.sync_block):
 	def set_limval(self, limval):
 		self.limval = limval
 
-class LimterMultiplexer(gr.sync_block):
+class LimiterMultiplexer(gr.sync_block):
+	"""
+		But Jesus beheld them, and said unto them, With men this is impossible; but with God all things are possible.
+	"""
 	class DisconnectObject:
 		def __init__(self, lm, xin):
 			self.lm = lm
@@ -110,16 +113,30 @@ class LimterMultiplexer(gr.sync_block):
 
 	def __init__(self, tb, dtype, dtsize, maxinputs):
 		gr.sync_block.__init__(self, 'PyCombiner', in_sig=[numpy.dtype(dtype)] * maxinputs, out_sig=[numpy.dtype(dtype)])
-		self.limvals = [0.0] * maxinputs
+		self.limvals = [1.0] * maxinputs
 		self.mulvals = [0.0] * maxinputs
 		self.mlimstage = True
 		self.dtype = numpy.dtype(dtype)
 		self.input_blocks = [None] * maxinputs
 		self.tb = tb
 		self.null_src = blocks.null_source(dtsize)
+		self.mon = [None] * maxinputs
 		for indx in xrange(0, len(self.input_blocks)):
 			self.input_blocks[indx] = self.null_src
 			self.tb.connect(self.null_src, (self, indx))
+
+	def tick(self):
+		s = 0.0
+		for x in xrange(0, len(self.input_blocks)):
+			if self.mon[x] is not None:
+				s = s + self.mon[x].get_value()
+		for x in xrange(0, len(self.input_blocks)):
+			if s == 0.0 or self.mon[x] is None:
+				r = 0.0
+			else:
+				r = self.mon[x].get_value() / s
+			self.mulvals[x] = r
+			print 'mulval[%s]=%s' % (x, r)
 
 	def disconnect_all_inputs(self):
 		self.tb.lock()
@@ -129,18 +146,22 @@ class LimterMultiplexer(gr.sync_block):
 
 	def disconnect_input(self, f):
 		self.tb.lock()
+		found = False
 		for x in xrange(0, len(self.input_blocks)):
 			if self.input_blocks[x] is f:
-				self.input_blocks.pop(x)
+				self.input_blocks[x] = None
 				self.tb.disconnect(f, (self, x))
 				self.input_blocks[x] = self.null_src
 				self.tb.connect(self.null_src, (self, x))
+				self.mon[x] = None
+				found = True
 				break
+		if not found:
+			raise Exception('The block could not be found.')
 		self.tb.unlock()
-		return LimterMultiplexer.DisconnectObject(self, f)
 
-	def connect(self, f):
-		return self.connect_input(f)
+	def connect(self, txblock, pwrprimon=None, lim=1.0):
+		return self.connect_input(txblock, pwrprimon=pwrprimon, lim=lim)
 
 	def get_free_input_index(self):
 		for x in xrange(0, len(self.input_blocks)):
@@ -148,13 +169,16 @@ class LimterMultiplexer(gr.sync_block):
 				return x
 		return None
 
-	def connect_input(self, f):
+	def connect_input(self, f, pwrprimon=None, lim=1.0):
 		self.tb.lock()
 		indx = self.get_free_input_index()
-		self.tb.disconnect(self.input_blocks[indx], (self, indx))
+		self.tb.disconnect(self.input_blocks[indx], (self, indx), guard=True)
 		self.input_blocks[indx] = f
+		self.mon[indx] = pwrprimon
+		self.limvals[indx] = lim
 		self.tb.connect(f, (self, indx))
 		self.tb.unlock()
+		return LimiterMultiplexer.DisconnectObject(self, f)
 
 	def connect_output(self, into):
 		self.tb.lock()
@@ -164,231 +188,31 @@ class LimterMultiplexer(gr.sync_block):
 	def work(self, input_items, output_items):
 		if self.mlimstage:
 			for x in xrange(0, len(input_items)):
-				if self.input_blocks[x] is self.null_src:
-					continue
+				try:
+					if self.input_blocks[x] is self.null_src:
+						continue
+				except Exception as e:
+					print 'x:%s len(input_items):%s len(input_blocks):%s' % (x, len(input_items), len(self.input_blocks))
+					raise e
 				ia = input_items[x]
-				ia = numpy.fmin(ia, self.limvals[x])
-				ia = numpy.multiply(ia, self.mulvals[x])
+				numpy.fmin(ia, self.limvals[x], ia)
+				numpy.multiply(ia, self.mulvals[x], ia)
 				input_items[x] = ia
 
-		bsize = len(output_items[0])
-
-		cur = numpy.zeros(bsize, self.dtype)
+		cur = None
 		for x in xrange(0, len(input_items)):
 			if self.input_blocks[x] is self.null_src:
 				continue
-			numpy.add(cur, input_items[x], cur)
-
-		output_items[0] = cur
-		return len(cur)
-
-class BlockMultipleAdd:
-	"""
-	Gracefully handles providing multiple outputs by addition to a single block
-	that only supports a single input and supports limiting and power priority
-	over float and complex streams.
-	"""
-	class DisconnectNode:
-		def __init__(self):
-			pass
-
-		def disconnect(self):
-			self.am.disconnect(self.txblock)
-
-	def __init__(self, tb, block, throttle=None, limit=None, bcomplex=False):
-		"""
-		The limit is the maximum output magnitude from this block.
-		"""
-		self.bcomplex = bcomplex
-		self.tb = tb
-		self.block_sink = block
-		if throttle is not None:
-			if bcomplex:
-				self.throttle = blocks.throttle(8, throttle)
+			if cur is None:
+				cur = input_items[x]
 			else:
-				self.throttle = blocks.throttle(4, throttle)
-			self.block_sink2 = self.block_sink
-			self.block_sink = self.throttle
+				numpy.add(cur, input_items[x], cur)
+		bsize = len(output_items[0])
+		if cur is None:
+			output_items[0][:] = numpy.zeros(bsize, self.dtype)
 		else:
-			self.throttle = None
-
-		self.ins = []
-		self.adds = []
-
-	def recalpwrpri(self):
-		tot = 0.0
-		# TODO: this can be optimized better
-		for x in xrange(0, len(self.ins)):
-			ain = self.ins[x]
-			if ain[3] is not None:
-				tot += ain[3].get_value()
-		for x in xrange(0, len(self.ins)):
-			ain = self.ins[x]
-			if ain[3] is not None:
-				if tot == 0.0:
-					# If no total then avoid division by zero below.
-					self.ins[x][0].set_mulval(0.0)
-				else:
-					self.ins[x][0].set_mulval(ain[3].get_value() / tot)
-
-	def tick(self):
-		# Recalculate power for power priorities.
-		self.recalpwrpri()
-
-	def connect(self, txblock, pwrprimon=None):
-		print 'CONNECT_ALL_MAP'
-		for ain in self.ins:
-			print ain
-
-		for x in xrange(0, len(self.ins)):
-			if self.ins[x][0] is txblock or self.ins[x][2] is txblock:
-				return False
-		self.__disconnect_all()
-		if pwrprimon is not None:
-			moder = Limiter()
-			moder.set_limval(1.0)
-			moder.set_mulval(0.0)
-			self.ins.append([moder, None, txblock, pwrprimon])
-		else:
-			self.ins.append([txblock, None, None, pwrprimon])
-		dnode = BlockMultipleAdd.DisconnectNode()
-		dnode.txblock = txblock
-		dnode.am = self
-		self.__connect_all()		
-		return dnode
-
-	def disconnect(self, txblock):
-		self.tb.lock()
-		self.__disconnect_all()
-		for x in xrange(0, len(self.ins)):
-			# Check both basic TXBLOCK and also limited TXBLOCK
-			#print '  check %s and %s against %s' % (self.ins[x][0], self.ins[x][3], txblock)
-			if self.ins[x][0] is txblock or self.ins[x][2] is txblock:
-				tmp = self.ins.pop(x)
-				print '  found; removed', tmp
-				break
-		self.__connect_all()
-		self.tb.unlock()
-
-	def __disconnect_all(self):
-		sys.stdout.flush()
-		self.tb.lock()
-		sys.stdout.flush()
-
-		print 'DISCONNECT_ALL_MAP'
-		for ain in self.ins:
-			print ain
-
-		try:
-			if self.throttle is not None:
-				self.tbdisconnect(self.throttle, self.block_sink2, 'A')
-		except Exception as e:
-			# This is okay to happen. It will not be connected
-			# the very first time and we support recurrent calling
-			# of this function for safety.
-			print 'exception', e
-
-		sys.stdout.flush()
-		if len(self.ins) > 0:
-			try:
-				self.tbdisconnect(self.ins[0][1], self.block_sink, 'K1')
-			except Exception as e:
-				print 'exception', e, 0
-			try:
-				self.tbdisconnect(self.ins[0][0], self.block_sink, 'K2')
-			except Exception as e:
-				print 'exception', e, 0
-			try:
-				self.tbdisconnect(self.ins[0][0], (self.ins[0][1], 0), 'K3')
-			except Exception as  e:
-				print 'exception', e, 0
-
-		for x in xrange(0, len(self.ins)):
-			sys.stdout.flush()
-			if x == 0:
-				pass
-			else:
-				print '--', self.ins[x]
-				# Try straight down.
-				try:
-					self.tbdisconnect(self.ins[x][1], self.ins[x-1][1], 'C')
-					print 'straight across', x
-				except Exception as e:
-					print 'exception', e, x
-				# Try across.
-				try:
-					self.tbdisconnect(self.ins[x][0], (self.ins[x][1], 0) , 'D')
-					print 'across', x
-				except Exception as e:
-					print 'exception', e, x
-				# Try straight down and across.
-				try:
-					self.tbdisconnect(self.ins[x][0], (self.ins[x - 1][1], 1) , 'H')
-					print 'down and across', x
-				except Exception as e:
-					print 'exception', e, x
-
-		# This breaks any limiter connections.
-		for x in xrange(0, len(self.ins)):
-			if self.ins[x][2] is not None:
-				self.tbdisconnect(self.ins[x][2], self.ins[x][0], 'V')
-
-		sys.stdout.flush()
-		sys.stdout.flush()
-		self.tb.unlock()
-		sys.stdout.flush()
-
-	def tbdisconnect(self, a, b, tag):
-		sys.stdout.flush()
-		self.tb.disconnect(a, b)
-
-	def tbconnect(self, a, b, tag):
-		sys.stdout.flush()
-		self.tb.connect(a, b)
-
-	def __connect_all(self):
-		self.tb.lock()
-		for x in xrange(0, len(self.ins)):
-			if x == len(self.ins) - 1:
-				self.ins[x][1] = None
-			else:
-				if self.ins[x][1] is None:
-					if self.bcomplex is True:
-						self.ins[x][1] = blocks.add_cc()
-					else:
-						self.ins[x][1] = blocks.add_ff()
-					self.ins[x][1].set_min_noutput_items(8192)
-		if len(self.ins) == 0:
- 			self.tb.unlock()
-			return True
-
-		# Connect limiters that act like a normal block.
-		for x in xrange(0, len(self.ins)):
-			if self.ins[x][2] is not None:
-				self.tbconnect(self.ins[x][2], self.ins[x][0], 'RXBLOCKMODER')
-
-		# Special case #1 (single)
-		if len(self.ins) == 1:
-			if self.throttle is not None:
-				self.tbconnect(self.throttle, self.block_sink2, 'Z2')
-			self.tbconnect(self.ins[0][0], self.block_sink, 'Z1')
-			self.tb.unlock()
-			return True 
-
-		for x in xrange(0, len(self.ins)):
-			if x == len(self.ins) - 1:
-				# Do not connect across, but at a diagonal.
-				self.tbconnect(self.ins[x][0], (self.ins[x-1][1], 1), 'C' + str(x))
-			else:
-				# Connect across, then connect down in preparation
-				# for a connection from the next level up.
-				if x == 0:
-					self.tbconnect(self.ins[x][1], self.block_sink, 'F' + str(x))
-				else:
-					self.tbconnect(self.ins[x][1], (self.ins[x-1][1], 1), 'D' + str(x))
-				self.tbconnect(self.ins[x][0], (self.ins[x][1], 0) , 'E' + str(x))
-		self.tb.unlock()
-		return True
+			output_items[0][:] = cur
+		return bsize
 
 def quick_layout(widget, widgets, horizontal=True):
 	if horizontal:
@@ -457,9 +281,11 @@ class YaesuBC(qtgui4.QWidget):
 				sys.stderr.write('CONNECT %s -> %s\n' % (a, b))
 			self.old_connect(*args)
 
-		def __disconnect(self, a, b):
+		def __disconnect(self, a, b, guard=False):
 			self.old_disconnect(a, b)
 			sys.stderr.write('DISCONNECT %s -> %s\n' % (a, b))
+			#if guard is False:
+			#	raise Exception('@@@')
 
 		setattr(self.tb, 'old_disconnect', self.tb.disconnect)
 		setattr(self.tb, 'disconnect', types.MethodType(__disconnect, self.tb))
@@ -572,15 +398,15 @@ class YaesuBC(qtgui4.QWidget):
 				# OK, for USRP B200
 				value = 73
 			dev.set_gain(value)
-			update_all_channels()
+			self.update_all_channels()
 		
 		def change_bw(dev, value):
 			dev.set_bandwidth(value)
-			update_all_channels()
+			self.update_all_channels()
 		
 		def change_sps(dev, value):
 			dev.set_samp_rate(value)
-			update_all_channels()
+			self.update_all_channels()
 
 		def change_vol(value):
 			pass
@@ -630,15 +456,15 @@ class YaesuBC(qtgui4.QWidget):
 		self.btx.set_gain(1)
 		self.btx.set_antenna('TX/RX')
 		self.btx.set_samp_rate(self.q_tx_sps.get_value())
-
+		
 		#self.btx = debug.Debug(numpy.dtype(numpy.complex64), tag='USRPTX')
 
 		#self.btx = blocks.file_sink(8, '/home/kmcguire/dump.test')
 
-		self.tx = BlockMultipleAdd(self.tb, self.btx, limit=0.75, bcomplex=True)
+		self.tx = LimiterMultiplexer(tb=self.tb, dtype=numpy.complex64, dtsize=8, maxinputs=8)
+		self.tb.connect(self.tx, self.btx)
 
 		def __tick_tx():
-			print 'ticking'
 			self.tx.tick()
 
 		self.tx_tick = qtcore4.QTimer(self)
@@ -675,11 +501,11 @@ class YaesuBC(qtgui4.QWidget):
 		self.b = audio.sink(16000, '', True)
 
 		self.audio_sink_base = audio.sink(16000) 
-		self.audio_sink = LimterMultiplexer(tb=self.tb, dtype=numpy.float32, dtsize=4, maxinputs=4)
+		self.audio_sink = LimiterMultiplexer(tb=self.tb, dtype=numpy.float32, dtsize=4, maxinputs=8)
 		self.tb.connect(self.audio_sink, self.audio_sink_base)
 
 		self.audio_source = audio.source(16000)
-		#self.audio_source = blocks.null_source(4)
+		#self.audio_source = blocks.file_source(4, '/home/kmcguire/')
 
 		'''
 			Configure the channels.

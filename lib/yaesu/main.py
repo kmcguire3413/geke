@@ -136,7 +136,7 @@ class LimiterMultiplexer(gr.sync_block):
 			else:
 				r = self.mon[x].get_value() / s
 			self.mulvals[x] = r
-			print 'mulval[%s]=%s' % (x, r)
+			#print 'mulvals dtype:%s x:%s r:%s' % (self.dtype, x, self.mulvals[x])
 
 	def disconnect_all_inputs(self):
 		self.tb.lock()
@@ -316,7 +316,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.mode_select.setParent(self.left_upper)
 		self.enable_channel.setParent(self.left_upper)
 
-		chan_count = 8
+		chan_count = 4
 		self.q_map = chanoverview.ChanOverview(chan_count)	
 
 		self.left_upper.setParent(self.left)
@@ -405,6 +405,7 @@ class YaesuBC(qtgui4.QWidget):
 			self.update_all_channels()
 		
 		def change_sps(dev, value):
+			print 'SPS SET for %s to %s' % (dev, value)
 			dev.set_samp_rate(value)
 			self.update_all_channels()
 
@@ -419,12 +420,12 @@ class YaesuBC(qtgui4.QWidget):
 
 		self.qfft.set_sps(start_sps)
 
-		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=lambda v: change_freq(self.rx, v), xdef=146000000)
+		self.q_rx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX FREQ', digits=12, signal=lambda v: change_freq(self.rx, v), xdef=146410000)
 		self.q_rx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX GAIN', digits=2, signal=lambda v: change_gain(self.rx, v), xdef=70)
 		self.q_rx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX BW', digits=9, signal=lambda v: change_bw(self.rx, v), xdef=63500)
 		self.q_rx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='RX SPS', digits=4, mul=16000, signal=lambda v: change_sps(self.rx, v), xdef=4)
 
-		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, xdef=146000000, signal=lambda v: change_freq(self.btx, v))
+		self.q_tx_cfreq = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX FREQ', digits=12, xdef=146410000, signal=lambda v: change_freq(self.btx, v))
 		self.q_tx_gain = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX GAIN', digits=2, xdef=0, signal=lambda v: change_gain(self.btx, v))
 		self.q_tx_bw = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX BW', digits=9, xdef=63500, signal=lambda v: change_bw(self.btx, v))
 		self.q_tx_sps = qlcdnumberadjustable.QLCDNumberAdjustable(label='TX SPS', digits=4, mul=16000, xdef=4, signal=lambda v: change_sps(self.btx, v))
@@ -465,11 +466,30 @@ class YaesuBC(qtgui4.QWidget):
 		self.tb.connect(self.tx, self.btx)
 
 		def __tick_tx():
+			# This tick allows the transmit multiplexer to calculate
+			# power allocates and adjust the limiter and gates so that
+			# each channel can transmit using a certain percentage of
+			# the total avaliable power without flucuations. This ticks
+			# at a low speed.
 			self.tx.tick()
+			# Also, the audio sink is multiplexed exactly the same, but it
+			# uses a float-32, of of this moment, type in the stream instead
+			# of a complex-64 item type.
+			self.audio_sink.tick()
+
+		def __tick_qmap():
+			# This allows the channel overview to perform any needed
+			# updates. It ticks at a moderate speed.
+			self.q_map.tick()
 
 		self.tx_tick = qtcore4.QTimer(self)
 		self.tx_tick.timeout.connect(__tick_tx)
 		self.tx_tick.start(1000)
+
+		self.qmap_tick = qtcore4.QTimer(self)
+		self.qmap_tick.timeout.connect(__tick_qmap)
+		self.qmap_tick.start(250)
+
 
 		'''
 		samps = []
@@ -503,6 +523,7 @@ class YaesuBC(qtgui4.QWidget):
 		self.audio_sink_base = audio.sink(16000) 
 		self.audio_sink = LimiterMultiplexer(tb=self.tb, dtype=numpy.float32, dtsize=4, maxinputs=8)
 		self.tb.connect(self.audio_sink, self.audio_sink_base)
+		self.tb.connect(self.audio_sink, debug.Debug(xtype=numpy.dtype(numpy.float32), tag='FROM RX LAST BLOCK'))
 
 		self.audio_source = audio.source(16000)
 		#self.audio_source = blocks.file_source(4, '/home/kmcguire/')
@@ -510,14 +531,13 @@ class YaesuBC(qtgui4.QWidget):
 		'''
 			Configure the channels.
 		'''
+		xself = self
 		self.tb.lock()
 		for x in xrange(0, chan_count):
 			self.q_map.set_chan_volume(x, 0.5)
 			self.q_map.set_chan_active(x, False)
 			self.q_map.set_chan_volume(x, 0.8)
-			self.q_map.set_chan_audio_level(x, 0.0)	
-
-			xself = self		
+			self.q_map.set_chan_audio_level(x, 0.0)			
 
 			def __change_volume(self, volume):
 				print 'set volume %s on channel %s' % (volume, self.ndx)
@@ -537,6 +557,9 @@ class YaesuBC(qtgui4.QWidget):
 			def __change_width(self, width_hz):
 				xself.qfft.set_center_width(self.ndx, width_hz)
 
+			def __set_audio_strength_query_func(self, f):
+				xself.q_map.set_audio_strength_query_func(self.ndx, f)
+
 			chanover = ChanOverProxy()
 			chanover.ndx = x
 			chanover.active = False
@@ -545,6 +568,7 @@ class YaesuBC(qtgui4.QWidget):
 			chanover.change_active = types.MethodType(__change_active, chanover)
 			chanover.change_center_freq = types.MethodType(__change_center_freq, chanover)
 			chanover.change_width = types.MethodType(__change_width, chanover)
+			chanover.set_audio_strength_query_func = types.MethodType(__set_audio_strength_query_func, chanover)
 
 			block = mode_am.AM(self.tb, self.rx, self.tx, self.audio_sink, self.audio_source, chanover, self.beep)
 			# The `start_sps` is needed as the control can not be accurately read

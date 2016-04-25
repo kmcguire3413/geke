@@ -15,6 +15,31 @@ import time
 import sys
 import threading
 
+class SignalStrengthCalculator(gr.sync_block):
+	def __init__(self, dtype):
+		gr.sync_block.__init__(
+			self,
+			'SignalStrengthCalculator',
+			in_sig=[numpy.dtype(dtype)],
+			out_sig=[]
+		)
+		self.cnt = 0.0
+		self.sum = 0.0
+
+	def work(self, input_items, output_items):
+		numpy.fabs(input_items[0], input_items[0])
+		self.sum += numpy.sum(input_items[0])
+		self.cnt += float(len(input_items[0]))
+		return len(input_items[0])
+
+	def get_value(self):
+		if self.cnt == 0.0:
+			return -1.0
+		avg = self.sum / self.cnt
+		self.sum = 0.0
+		self.cnt = 0.0
+		return -5.0
+
 class RepeatLimitAndRot(gr.interp_block):
 	"""
 	"""
@@ -43,7 +68,7 @@ class RepeatLimitAndRot(gr.interp_block):
 
 		inp = numpy.repeat(inp, self.repeat)
 		inp = numpy.vectorize(complex)(inp, [0])
-		
+
 		(self.last_theta, self.last_mag) = geke.spin_and_limit(self.rot_limit, self.theta_inc, self.last_theta, self.last_mag, inp)
 		oup[:] = inp
 		return len(oup)

@@ -22,8 +22,26 @@ class ChanOverview(qtgui4.QWidget):
 			cont.active = False
 			cont.squelch = 0.0
 			cont.volume = 0.0
-			cont.audio = 0.0			
+			cont.audio = 0.0
+			# Audio strength query function.
+			cont.astrqf = None		
 			self.chans.append(cont)
+
+	def tick(self):
+		# This updates the visual for the current audio level in
+		# whatever form it may be in.
+		for cont in self.chans:
+			if cont.astrqf is not None:
+				audio = cont.astrqf()
+				#print 'got audio level using tick as %s' % audio
+				if audio <= 0.0:
+					audio = -70
+				else:
+					audio = 10.0 * math.log(audio, 10.0)
+				# Normalize between 12dB and -70dB.
+				audio = (audio - -70) / (12 - -70)
+				cont.audio = audio
+		self.update()
 
 	def compute_dim(self):
 		bdim = math.ceil(math.sqrt(float(self.chancnt)))
@@ -117,6 +135,9 @@ class ChanOverview(qtgui4.QWidget):
 		else:
 			self.chans[ndx].active = False
 		self.update()
+
+	def set_audio_strength_query_func(self, ndx, f):
+		self.chans[ndx].astrqf = f
 
 	# Color the left bar for volume intensity at 0.0 to 1.0
 	def set_chan_volume(self, ndx, volume):
